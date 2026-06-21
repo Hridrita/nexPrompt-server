@@ -63,6 +63,21 @@ async function run() {
         _id: new ObjectId(id)
       })
       res.send(result);
+    });
+
+    app.get('/api/prompts/:userId', async(req,res)=>{
+      const userId = req.params.userId;
+      const result = await promptCollection.find({creatorsId: userId}).toArray();
+      res.send(result);
+    });
+
+    app.get('/api/prompts/:id', async(req,res)=>{
+      const id = req.params.id;
+      const query = {
+        _id: new ObjectId(id),
+      };
+      const result = await promptCollection.find(query);
+      res.send(result);
     })
 
 
