@@ -29,6 +29,7 @@ async function run() {
 
     const db = client.db("nexPrompt_db");
     const promptCollection = db.collection('prompts');
+    const userCollection = db.collection("user");
 
     app.get('/api/prompts', async(req,res)=>{
       const result = await promptCollection.find().toArray();
@@ -65,7 +66,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get('/api/prompts/:userId', async(req,res)=>{
+    app.get('/api/prompts/creator/:userId', async(req,res)=>{
       const userId = req.params.userId;
       const result = await promptCollection.find({creatorsId: userId}).toArray();
       res.send(result);
@@ -76,8 +77,17 @@ async function run() {
       const query = {
         _id: new ObjectId(id),
       };
-      const result = await promptCollection.find(query);
-      res.send(result);
+      const prompt = await promptCollection.findOne(query);
+
+      const creator = await userCollection.findOne({
+        _id: new ObjectId(prompt.creatorsId)
+      });
+      console.log('creator', creator);
+
+      
+       
+      
+      res.send({...prompt, creator});
     })
 
 
