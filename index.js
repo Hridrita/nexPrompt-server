@@ -31,6 +31,7 @@ async function run() {
     const promptCollection = db.collection("prompts");
     const userCollection = db.collection("user");
     const bookmarkCollection = db.collection("bookmark");
+    const reportCollection = db.collection("reports");
 
     //prompt related api's
 
@@ -130,23 +131,92 @@ async function run() {
       res.json({ bookmarked: !!existing });
     });
 
-    app.get('/api/bookmark/user/:userId', async(req,res)=>{
+    app.get("/api/bookmark/user/:userId", async (req, res) => {
       const userId = req.params.userId;
-      const result = await bookmarkCollection.find({userId:userId}).toArray();
-      res.send(result)
-
+      const result = await bookmarkCollection
+        .find({ userId: userId })
+        .toArray();
+      res.send(result);
     });
 
     //copy related api
-    
-    app.patch('/api/prompts/:id/copy', async(req,res)=>{
+
+    app.patch("/api/prompts/:id/copy", async (req, res) => {
       const id = req.params.id;
       const result = await promptCollection.updateOne(
-        {_id: new ObjectId(id)},
-        {$inc: {copyCount: 1}}
-      )
+        { _id: new ObjectId(id) },
+        { $inc: { copyCount: 1 } },
+      );
       res.send(result);
-    })
+    });
+
+    //review related api
+
+    app.post("/api/prompts/:id/review", async (req, res) => {
+      const id = req.params.id;
+      const { name, email, rating, comment } = req.body;
+
+      const review = {
+        _id: new ObjectId(),
+        name,
+        email,
+        rating: Number(rating),
+        comment,
+        date: new Date().toLocaleDateString("en-US", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }),
+      };
+
+      const result = await promptCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $push: { reviews: review },
+          $set: { rating: 0 }, // recalc below
+        },
+      );
+
+      
+      const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
+      const avg =
+        prompt.reviews.reduce((sum, r) => sum + r.rating, 0) /
+        prompt.reviews.length;
+
+      await promptCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { rating: avg } },
+      );
+
+      res.send(result);
+    });
+
+    //report realted api
+
+    app.post('/api/reports', async (req, res) => {
+  const { promptId, promptTitle, creatorId, reason, description } = req.body;
+  
+  const report = {
+    promptId,
+    promptTitle,
+    creatorId,
+    reason,
+    description: description || "",
+    createdAt: new Date()
+  };
+
+  const result = await reportCollection.insertOne(report);
+  res.send(result);
+});
+
+
+
+
+
+
+
+
+
 
 
 
