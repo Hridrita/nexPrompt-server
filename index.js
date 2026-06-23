@@ -137,6 +137,17 @@ async function run() {
 
     });
 
+    //copy related api
+    
+    app.patch('/api/prompts/:id/copy', async(req,res)=>{
+      const id = req.params.id;
+      const result = await promptCollection.updateOne(
+        {_id: new ObjectId(id)},
+        {$inc: {copyCount: 1}}
+      )
+      res.send(result);
+    })
+
 
 
 
