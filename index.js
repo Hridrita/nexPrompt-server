@@ -1583,20 +1583,241 @@ async function run() {
     });
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     
+
+//top creators api
+
+
+app.get("/api/creators/top", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 4;
+    
+    const allUsers = await userCollection.find({ 
+      role: { $in: ["user", "creator"] } 
+    }).toArray();
+    
+    if (allUsers.length === 0) {
+      return res.json({
+        success: true,
+        creators: [],
+        total: 0,
+        message: "No users found"
+      });
+    }
+    
+    const usersWithStats = await Promise.all(
+      allUsers.map(async (user) => {
+        const approvedCount = await promptCollection.countDocuments({ 
+          creatorsId: user._id.toString(),
+          status: "approved"
+        });
+        
+        const pendingCount = await promptCollection.countDocuments({ 
+          creatorsId: user._id.toString(),
+          status: "pending"
+        });
+        
+        const totalPrompts = await promptCollection.countDocuments({ 
+          creatorsId: user._id.toString()
+        });
+        
+        const totalCopies = await promptCollection.aggregate([
+          { $match: { 
+            creatorsId: user._id.toString(),
+            status: "approved" 
+          }},
+          { $group: { _id: null, total: { $sum: "$copyCount" } } }
+        ]).toArray();
+        
+        const totalBookmarks = await promptCollection.aggregate([
+          { $match: { 
+            creatorsId: user._id.toString(),
+            status: "approved" 
+          }},
+          { $group: { _id: null, total: { $sum: "$bookmarkCount" } } }
+        ]).toArray();
+        
+        return {
+          _id: user._id.toString(),
+          name: user.name || "Anonymous User",
+          email: user.email,
+          role: user.role || "user",
+          approvedCount: approvedCount || 0,
+          pendingCount: pendingCount || 0,
+          totalPrompts: totalPrompts || 0,
+          promptCount: totalPrompts || 0, // ✅ Frontend-এর জন্য যোগ করুন
+          totalCopies: totalCopies[0]?.total || 0,
+          totalBookmarks: totalBookmarks[0]?.total || 0,
+          image: user.image || null,
+          plan: user.plan || "free",
+          createdAt: user.createdAt
+        };
+      })
+    );
+    
+    // ✅ Filter: যাদের approvedCount > 0
+    const topCreators = usersWithStats
+      .filter(c => c.approvedCount > 0)
+      .sort((a, b) => b.approvedCount - a.approvedCount)
+      .slice(0, limit);
+    
+    if (topCreators.length === 0) {
+      const fallbackCreators = usersWithStats
+        .filter(c => c.totalPrompts > 0)
+        .sort((a, b) => b.totalPrompts - a.totalPrompts)
+        .slice(0, limit);
+      
+      return res.json({
+        success: true,
+        creators: fallbackCreators,
+        total: fallbackCreators.length,
+        fallback: true,
+        message: "No approved prompts yet, showing creators with pending prompts"
+      });
+    }
+    
+    res.json({
+      success: true,
+      creators: topCreators,
+      total: topCreators.length,
+      fallback: false
+    });
+    
+  } catch (error) {
+    console.error("Error fetching top creators:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch top creators",
+      creators: []
+    });
+  }
+});
+
+
+
+
+// customer review apis
+
+// Get all reviews with user details
+app.get("/api/reviews/all", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 4;
+    
+    // Get all prompts with reviews
+    const promptsWithReviews = await promptCollection
+      .find({ 
+        "reviews.0": { $exists: true } 
+      })
+      .project({ 
+        title: 1, 
+        reviews: 1,
+        creatorsId: 1 
+      })
+      .toArray();
+    
+    // Extract all reviews with prompt and user info
+    let allReviews = [];
+    
+    for (const prompt of promptsWithReviews) {
+      // Get creator info
+      const creator = await userCollection.findOne(
+        { _id: new ObjectId(prompt.creatorsId) },
+        { projection: { name: 1, email: 1, image: 1 } }
+      );
+      
+      // Add prompt title and creator info to each review
+      const reviewsWithInfo = prompt.reviews.map(review => ({
+        ...review,
+        promptTitle: prompt.title,
+        creatorName: creator?.name || "Unknown Creator",
+        creatorImage: creator?.image || null,
+        promptId: prompt._id
+      }));
+      
+      allReviews = [...allReviews, ...reviewsWithInfo];
+    }
+    
+    // Sort by date (newest first) and limit
+    allReviews.sort((a, b) => {
+      const dateA = new Date(a.date || a.createdAt || 0);
+      const dateB = new Date(b.date || b.createdAt || 0);
+      return dateB - dateA;
+    });
+    
+    // Get unique reviews (limit)
+    const limitedReviews = allReviews.slice(0, limit);
+    
+    res.json({
+      success: true,
+      reviews: limitedReviews,
+      total: allReviews.length
+    });
+    
+  } catch (error) {
+    console.error("Error fetching reviews:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch reviews",
+      reviews: []
+    });
+  }
+});
+
+// Get review statistics
+app.get("/api/reviews/stats", async (req, res) => {
+  try {
+    const totalReviews = await promptCollection.aggregate([
+      { $project: { reviewCount: { $size: "$reviews" } } },
+      { $group: { _id: null, total: { $sum: "$reviewCount" } } }
+    ]).toArray();
+    
+    // Average rating
+    const avgRating = await promptCollection.aggregate([
+      { $unwind: "$reviews" },
+      { $group: { _id: null, avg: { $avg: "$reviews.rating" } } }
+    ]).toArray();
+    
+    // Rating distribution
+    const ratingDistribution = await promptCollection.aggregate([
+      { $unwind: "$reviews" },
+      { $group: { _id: "$reviews.rating", count: { $sum: 1 } } },
+      { $sort: { _id: -1 } }
+    ]).toArray();
+    
+    res.json({
+      success: true,
+      totalReviews: totalReviews[0]?.total || 0,
+      averageRating: avgRating[0]?.avg || 0,
+      ratingDistribution: ratingDistribution.map(r => ({
+        rating: r._id,
+        count: r.count
+      }))
+    });
+    
+  } catch (error) {
+    console.error("Error fetching review stats:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch review stats" 
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     await client.db("admin").command({ ping: 1 });
     console.log(
