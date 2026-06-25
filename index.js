@@ -1318,6 +1318,156 @@ app.get("/api/admin/analytics/over-time", async (req, res) => {
 
 
 
+// creator dashboard apis
+
+// Get creator stats
+app.get("/api/creator/stats/:creatorId", async (req, res) => {
+  try {
+    const creatorId = req.params.creatorId;
+    
+    // Get all prompts by this creator
+    const prompts = await promptCollection.find({ creatorsId: creatorId }).toArray();
+    
+    // Total Prompts
+    const totalPrompts = prompts.length;
+    
+    // Total Copies
+    let totalCopies = 0;
+    let totalBookmarks = 0;
+    
+    for (const prompt of prompts) {
+      if (prompt.copyCount) totalCopies += prompt.copyCount;
+      if (prompt.bookmarkCount) totalBookmarks += prompt.bookmarkCount;
+    }
+    
+    // Get approved prompts count
+    const approvedPrompts = prompts.filter(p => p.status === "approved").length;
+    const pendingPrompts = prompts.filter(p => p.status === "pending").length;
+    const rejectedPrompts = prompts.filter(p => p.status === "rejected").length;
+    
+    res.json({
+      totalPrompts,
+      totalCopies,
+      totalBookmarks,
+      approvedPrompts,
+      pendingPrompts,
+      rejectedPrompts,
+      success: true
+    });
+    
+  } catch (error) {
+    console.error("Error fetching creator stats:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch creator stats",
+      totalPrompts: 0,
+      totalCopies: 0,
+      totalBookmarks: 0,
+      approvedPrompts: 0,
+      pendingPrompts: 0,
+      rejectedPrompts: 0
+    });
+  }
+});
+
+// Get creator chart data
+app.get("/api/creator/charts/:creatorId", async (req, res) => {
+  try {
+    const creatorId = req.params.creatorId;
+    const { period = "weekly" } = req.query;
+    
+    // Get all prompts by this creator
+    const prompts = await promptCollection.find({ creatorsId: creatorId }).toArray();
+    
+    // Get date range
+    let days = 7;
+    if (period === "weekly") days = 7;
+    else if (period === "monthly") days = 30;
+    else if (period === "yearly") days = 365;
+    
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    
+    // Filter prompts by date
+    const filteredPrompts = prompts.filter(p => {
+      const createdAt = new Date(p.createdAt);
+      return createdAt >= startDate && createdAt <= endDate;
+    });
+    
+    // Group by date for chart
+    const dateMap = new Map();
+    
+    // Initialize all dates
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const key = d.toISOString().split('T')[0];
+      dateMap.set(key, { date: key, prompts: 0, copies: 0 });
+    }
+    
+    // Fill data
+    for (const prompt of filteredPrompts) {
+      const key = new Date(prompt.createdAt).toISOString().split('T')[0];
+      if (dateMap.has(key)) {
+        const data = dateMap.get(key);
+        data.prompts += 1;
+        data.copies += prompt.copyCount || 0;
+      }
+    }
+    
+    // Convert to array and sort
+    const chartData = Array.from(dateMap.values())
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(item => ({
+        name: new Date(item.date).toLocaleDateString('en-US', { 
+          month: 'short', 
+          day: 'numeric' 
+        }),
+        prompts: item.prompts,
+        copies: item.copies
+      }));
+    
+    // Get last 6 weeks for growth chart
+    const growthData = [];
+    const weeks = 6;
+    const now = new Date();
+    
+    for (let i = weeks - 1; i >= 0; i--) {
+      const weekStart = new Date(now);
+      weekStart.setDate(weekStart.getDate() - (i * 7 + 7));
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      
+      const weekPrompts = prompts.filter(p => {
+        const createdAt = new Date(p.createdAt);
+        return createdAt >= weekStart && createdAt <= weekEnd;
+      });
+      
+      growthData.push({
+        name: `Week ${weeks - i}`,
+        prompts: weekPrompts.length
+      });
+    }
+    
+    res.json({
+      success: true,
+      copiesData: chartData.slice(-7), // Last 7 days
+      growthData: growthData,
+      period: period
+    });
+    
+  } catch (error) {
+    console.error("Error fetching creator charts:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch creator charts",
+      copiesData: [],
+      growthData: []
+    });
+  }
+});
+
+
+
 
 
 
