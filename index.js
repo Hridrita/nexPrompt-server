@@ -18,7 +18,7 @@ app.get("/", (req, res) => {
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
-    strict: true,
+    strict: false,
     deprecationErrors: true,
   },
 });
@@ -99,6 +99,17 @@ async function run() {
 };
 
       const result = await promptCollection.insertOne(newPrompt);
+
+      //for notification
+      const admins = await userCollection.find({ role: "admin" }).toArray();
+  for (const admin of admins) {
+    await sendNotification(admin._id.toString(), {
+      type: "pending",
+      title: newPrompt.title,
+      message: `📝 New prompt "${newPrompt.title}" submitted by ${user.name || user.email} needs review`,
+      promptId: result.insertedId.toString()
+    });
+  }
       res.json(result);
     });
 
@@ -294,6 +305,12 @@ app.get("/api/reviews/user", async (req, res) => {
       };
 
       const result = await subscriptionCollection.insertOne(subscription);
+
+      // Send notification to user
+  await sendNotification(userId, {
+    type: "subscription",
+    message: `🎉 You have successfully subscribed to the Premium plan!`,
+  });
       res.send(result);
     });
 
@@ -510,11 +527,21 @@ app.patch("/api/admin/prompts/:id/feature", async (req, res) => {
     }
   );
 
+
   if (result.modifiedCount === 0) {
     return res.status(404).json({ error: "Prompt not found" });
   }
 
   const updatedPrompt = await promptCollection.findOne({ _id: new ObjectId(id) });
+
+  if (featured) {
+    await sendNotification(prompt.creatorsId, {
+      type: "featured",
+      message: `⭐ Your prompt "${prompt.title}" has been featured!`,
+      promptId: id,
+      title: prompt.title
+    });
+  }
   res.json({ 
     message: featured ? "Prompt featured successfully" : "Prompt unfeatured successfully",
     prompt: updatedPrompt 
@@ -868,6 +895,425 @@ app.patch("/api/admin/subscriptions/:id/status", async (req, res) => {
     message: `Subscription ${status} successfully`,
     subscription: updatedSubscription 
   });
+});
+
+
+//reports api
+
+
+// Get all reports with prompt and user details
+app.get("/api/admin/reports", async (req, res) => {
+  try {
+    const reports = await reportCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    // Get prompt and user details for each report
+    const reportsWithDetails = await Promise.all(
+      reports.map(async (report) => {
+        // Get prompt details
+        const prompt = await promptCollection.findOne(
+          { _id: new ObjectId(report.promptId) },
+          { projection: { title: 1, description: 1, thumbnail: 1, creatorsId: 1, status: 1 } }
+        );
+
+        // Get creator details
+        let creator = null;
+        if (prompt?.creatorsId) {
+          creator = await userCollection.findOne(
+            { _id: new ObjectId(prompt.creatorsId) },
+            { projection: { name: 1, email: 1 } }
+          );
+        }
+
+        return {
+          ...report,
+          _id: report._id.toString(),
+          prompt: prompt || null,
+          creator: creator || null,
+        };
+      })
+    );
+
+    res.send(reportsWithDetails);
+  } catch (error) {
+    console.error("Error fetching reports:", error);
+    res.status(500).json({ error: "Failed to fetch reports" });
+  }
+});
+
+// Remove prompt and all its reports
+app.delete("/api/admin/reports/:promptId/remove", async (req, res) => {
+  const promptId = req.params.promptId;
+
+  try {
+    // Get prompt first
+    const prompt = await promptCollection.findOne({ _id: new ObjectId(promptId) });
+    if (!prompt) {
+      return res.status(404).json({ error: "Prompt not found" });
+    }
+
+    // Delete the prompt
+    await promptCollection.deleteOne({ _id: new ObjectId(promptId) });
+
+    // Delete all reports for this prompt
+    await reportCollection.deleteMany({ promptId: promptId });
+
+    // Send notification to creator
+    await sendNotification(prompt.creatorsId, {
+      type: "deleted",
+      title: prompt.title,
+      message: `Your prompt "${prompt.title}" has been removed due to multiple reports.`,
+    });
+
+    res.json({
+      message: `Prompt "${prompt.title}" removed successfully`,
+      promptId: promptId,
+    });
+  } catch (error) {
+    console.error("Error removing prompt:", error);
+    res.status(500).json({ error: "Failed to remove prompt" });
+  }
+});
+
+// Warn creator
+app.patch("/api/admin/reports/:promptId/warn", async (req, res) => {
+  const promptId = req.params.promptId;
+  const { warningMessage } = req.body;
+
+  try {
+    const prompt = await promptCollection.findOne({ _id: new ObjectId(promptId) });
+    if (!prompt) {
+      return res.status(404).json({ error: "Prompt not found" });
+    }
+
+    // Update prompt with warning
+    await promptCollection.updateOne(
+      { _id: new ObjectId(promptId) },
+      {
+        $set: {
+          warned: true,
+          warningMessage: warningMessage || "Your prompt has been reported. Please review our guidelines.",
+          warnedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    // Send warning notification to creator
+    await sendNotification(prompt.creatorsId, {
+      type: "warning",
+      title: prompt.title,
+      message: `Warning: Your prompt "${prompt.title}" has been reported.`,
+      feedback: warningMessage || "Please review our community guidelines.",
+    });
+
+    res.json({
+      message: `Warning sent to creator of "${prompt.title}"`,
+      promptId: promptId,
+    });
+  } catch (error) {
+    console.error("Error warning creator:", error);
+    res.status(500).json({ error: "Failed to warn creator" });
+  }
+});
+
+// Dismiss report (not harmful)
+app.patch("/api/admin/reports/:reportId/dismiss", async (req, res) => {
+  const reportId = req.params.reportId;
+
+  try {
+    const report = await reportCollection.findOne({ _id: new ObjectId(reportId) });
+    if (!report) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+
+    // Update report status
+    await reportCollection.updateOne(
+      { _id: new ObjectId(reportId) },
+      {
+        $set: {
+          status: "dismissed",
+          dismissedAt: new Date(),
+        },
+      }
+    );
+
+    res.json({
+      message: "Report dismissed successfully",
+      reportId: reportId,
+    });
+  } catch (error) {
+    console.error("Error dismissing report:", error);
+    res.status(500).json({ error: "Failed to dismiss report" });
+  }
+});
+
+// Get report statistics
+app.get("/api/admin/reports/stats", async (req, res) => {
+  try {
+    const totalReports = await reportCollection.countDocuments();
+    const pendingReports = await reportCollection.countDocuments({ status: { $ne: "dismissed" } });
+    const dismissedReports = await reportCollection.countDocuments({ status: "dismissed" });
+
+    // Get unique prompts with reports
+    const uniquePromptIds = await reportCollection.distinct("promptId");
+    const uniquePrompts = uniquePromptIds.length;
+
+    // Get reports by reason
+    const reasons = await reportCollection.aggregate([
+      { $group: { _id: "$reason", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]).toArray();
+
+    res.json({
+      totalReports,
+      pendingReports,
+      dismissedReports,
+      uniquePrompts,
+      reasons: reasons.map(r => ({ reason: r._id, count: r.count })),
+    });
+  } catch (error) {
+    console.error("Error fetching report stats:", error);
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
+
+
+
+
+// analytics apis
+
+// Get all analytics data
+
+app.get("/api/admin/analytics", async (req, res) => {
+  try {
+    console.log("Fetching analytics data...");
+    
+    //Total Users
+    const totalUsers = await userCollection.countDocuments() || 0;
+    console.log(`Total Users: ${totalUsers}`);
+    
+    //Total Prompts
+    const totalPrompts = await promptCollection.countDocuments() || 0;
+    console.log(`Total Prompts: ${totalPrompts}`);
+    
+    //Prompt Status
+    const approvedPrompts = await promptCollection.countDocuments({ status: "approved" }) || 0;
+    const pendingPrompts = await promptCollection.countDocuments({ status: "pending" }) || 0;
+    const rejectedPrompts = await promptCollection.countDocuments({ status: "rejected" }) || 0;
+    console.log(`Approved: ${approvedPrompts}, Pending: ${pendingPrompts}, Rejected: ${rejectedPrompts}`);
+    
+    //Reviews, Copies, Bookmark, Rating
+    let totalReviews = 0;
+    let totalCopyCount = 0;
+    let totalBookmarkCount = 0;
+    let totalRatingSum = 0;
+    let promptsWithRating = 0;
+    
+    const allPrompts = await promptCollection.find({}, { 
+      projection: { reviews: 1, copyCount: 1, bookmarkCount: 1, rating: 1 } 
+    }).toArray();
+    
+    for (const prompt of allPrompts) {
+      if (prompt.reviews && Array.isArray(prompt.reviews)) {
+        totalReviews += prompt.reviews.length;
+      }
+      if (prompt.copyCount) {
+        totalCopyCount += prompt.copyCount;
+      }
+      if (prompt.bookmarkCount) {
+        totalBookmarkCount += prompt.bookmarkCount;
+      }
+      if (prompt.rating && prompt.rating > 0) {
+        totalRatingSum += prompt.rating;
+        promptsWithRating++;
+      }
+    }
+    
+    const averageRating = promptsWithRating > 0 ? Math.round((totalRatingSum / promptsWithRating) * 10) / 10 : 0;
+    console.log(`Reviews: ${totalReviews}, Copies: ${totalCopyCount}, Avg Rating: ${averageRating}`);
+    
+    //User Roles
+    const adminUsers = await userCollection.countDocuments({ role: "admin" }) || 0;
+    const creatorUsers = await userCollection.countDocuments({ role: "creator" }) || 0;
+    const regularUsers = await userCollection.countDocuments({ role: "user" }) || 0;
+    const premiumUsers = await userCollection.countDocuments({ plan: "premium" }) || 0;
+    const freeUsers = await userCollection.countDocuments({ plan: { $ne: "premium" } }) || 0;
+    
+    //Categories & AI Tools
+    const categoriesResult = await promptCollection.aggregate([
+      { $group: { _id: "$category" } },
+      { $count: "total" }
+    ]).toArray();
+    const totalCategories = categoriesResult[0]?.total || 0;
+    
+    const aiToolsResult = await promptCollection.aggregate([
+      { $group: { _id: "$aiTool" } },
+      { $count: "total" }
+    ]).toArray();
+    const totalAITools = aiToolsResult[0]?.total || 0;
+    
+    //Active Users 
+    const activeUsersResult = await promptCollection.aggregate([
+      { $group: { _id: "$creatorsId" } },
+      { $count: "total" }
+    ]).toArray();
+    const totalActiveUsers = activeUsersResult[0]?.total || 0;
+    
+    //Recent Activity (Last 7 Days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const newUsersLast7Days = await userCollection.countDocuments({
+      createdAt: { $gte: sevenDaysAgo }
+    }) || 0;
+    
+    const newPromptsLast7Days = await promptCollection.countDocuments({
+      createdAt: { $gte: sevenDaysAgo }
+    }) || 0;
+    
+    //New Reviews Last 7 Days
+    const newReviewsResult = await promptCollection.aggregate([
+      { $unwind: "$reviews" },
+      { $match: { "reviews.createdAt": { $gte: sevenDaysAgo } } },
+      { $count: "total" }
+    ]).toArray();
+    const newReviewsLast7Days = newReviewsResult[0]?.total || 0;
+    
+    //Response Data
+    const responseData = {
+      totalUsers: totalUsers || 0,
+      totalPrompts: totalPrompts || 0,
+      totalReviews: totalReviews || 0,
+      totalCopyCount: totalCopyCount || 0,
+      totalBookmarkCount: totalBookmarkCount || 0,
+      averageRating: averageRating || 0,
+      approvedPrompts: approvedPrompts || 0,
+      pendingPrompts: pendingPrompts || 0,
+      rejectedPrompts: rejectedPrompts || 0,
+      premiumUsers: premiumUsers || 0,
+      freeUsers: freeUsers || 0,
+      adminUsers: adminUsers || 0,
+      creatorUsers: creatorUsers || 0,
+      regularUsers: regularUsers || 0,
+      totalActiveUsers: totalActiveUsers || 0,
+      totalCategories: totalCategories || 0,
+      totalAITools: totalAITools || 0,
+      newUsersLast7Days: newUsersLast7Days || 0,
+      newPromptsLast7Days: newPromptsLast7Days || 0,
+      newReviewsLast7Days: newReviewsLast7Days || 0,
+      updatedAt: new Date()
+    };
+    
+    console.log("Analytics data fetched successfully!");
+    res.json(responseData);
+    
+  } catch (error) {
+    console.error("Analytics Error:", error);
+    res.status(200).json({
+      totalUsers: 0,
+      totalPrompts: 0,
+      totalReviews: 0,
+      totalCopyCount: 0,
+      totalBookmarkCount: 0,
+      averageRating: 0,
+      approvedPrompts: 0,
+      pendingPrompts: 0,
+      rejectedPrompts: 0,
+      premiumUsers: 0,
+      freeUsers: 0,
+      adminUsers: 0,
+      creatorUsers: 0,
+      regularUsers: 0,
+      totalActiveUsers: 0,
+      totalCategories: 0,
+      totalAITools: 0,
+      newUsersLast7Days: 0,
+      newPromptsLast7Days: 0,
+      newReviewsLast7Days: 0,
+      updatedAt: new Date(),
+      error: error.message
+    });
+  }
+});
+
+// Get analytics over time 
+app.get("/api/admin/analytics/over-time", async (req, res) => {
+  const { period = "weekly" } = req.query;
+  
+  try {
+    let startDate = new Date();
+    let groupFormat = {};
+    
+    switch (period) {
+      case "daily":
+        startDate.setDate(startDate.getDate() - 30);
+        groupFormat = { 
+          year: { $year: "$createdAt" }, 
+          month: { $month: "$createdAt" }, 
+          day: { $dayOfMonth: "$createdAt" } 
+        };
+        break;
+      case "monthly":
+        startDate.setMonth(startDate.getMonth() - 12);
+        groupFormat = { 
+          year: { $year: "$createdAt" }, 
+          month: { $month: "$createdAt" } 
+        };
+        break;
+      default: // weekly
+        startDate.setDate(startDate.getDate() - 90);
+        groupFormat = { 
+          year: { $year: "$createdAt" }, 
+          week: { $week: "$createdAt" } 
+        };
+        break;
+    }
+    
+    // Users over time
+    const usersOverTime = await userCollection.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $group: { _id: groupFormat, count: { $sum: 1 } } },
+      { $sort: { "_id": 1 } }
+    ]).toArray();
+    
+    // Prompts over time
+    const promptsOverTime = await promptCollection.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $group: { _id: groupFormat, count: { $sum: 1 } } },
+      { $sort: { "_id": 1 } }
+    ]).toArray();
+    
+    // Reviews over time
+    const reviewsOverTime = await promptCollection.aggregate([
+      { $unwind: "$reviews" },
+      { $match: { "reviews.date": { $gte: startDate } } },
+      { $group: { _id: groupFormat, count: { $sum: 1 } } },
+      { $sort: { "_id": 1 } }
+    ]).toArray();
+    
+    // Copies over time
+    const copiesOverTime = await promptCollection.aggregate([
+      { $match: { updatedAt: { $gte: startDate } } },
+      { $group: { _id: groupFormat, totalCopies: { $sum: "$copyCount" } } },
+      { $sort: { "_id": 1 } }
+    ]).toArray();
+    
+    res.json({
+      period,
+      startDate,
+      usersOverTime,
+      promptsOverTime,
+      reviewsOverTime,
+      copiesOverTime
+    });
+  } catch (error) {
+    console.error("Error fetching analytics over time:", error);
+    res.status(500).json({ error: "Failed to fetch analytics over time" });
+  }
 });
 
 
