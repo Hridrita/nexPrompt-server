@@ -309,7 +309,7 @@ app.get("/api/reviews/user", async (req, res) => {
     });
 
 
-    // ============= ADMIN API'S =============
+    // admin apis
 
 
 app.get("/api/admin/prompts", async (req, res) => {
@@ -395,7 +395,7 @@ app.get("/api/admin/stats", async (req, res) => {
   });
 });
 
-// ============= ADD THESE APIs =============
+
 
 // 1. Update prompt status with user notification
 app.patch("/api/admin/prompts/:id/status", async (req, res) => {
@@ -456,9 +456,9 @@ app.get("/api/admin/pending-count", async (req, res) => {
 });
 
 
-// server.js - এই API গুলো যোগ করুন
 
-// ============= NEW ADMIN APIS =============
+
+// new admin apis
 
 // 1. Delete prompt (admin)
 app.delete("/api/admin/prompts/:id", async (req, res) => {
@@ -747,6 +747,127 @@ app.get("/api/admin/users/stats", async (req, res) => {
     console.error("Error fetching stats:", error);
     res.status(500).json({ error: "Failed to fetch stats" });
   }
+});
+
+
+
+// payment management
+
+// Get all subscriptions with user details
+app.get("/api/admin/subscriptions", async (req, res) => {
+  try {
+    const subscriptions = await subscriptionCollection
+      .find()
+      .sort({ subscribedAt: -1 })
+      .toArray();
+    
+    // Get user details for each subscription
+    const subscriptionsWithUser = await Promise.all(
+      subscriptions.map(async (sub) => {
+        const user = await userCollection.findOne(
+          { email: sub.email },
+          { projection: { name: 1, email: 1, plan: 1, role: 1, _id: 1 } }
+        );
+        return {
+          ...sub,
+          _id: sub._id.toString(),
+          user: user || { name: "Unknown", email: sub.email }
+        };
+      })
+    );
+    
+    res.send(subscriptionsWithUser);
+  } catch (error) {
+    console.error("Error fetching subscriptions:", error);
+    res.status(500).json({ error: "Failed to fetch subscriptions" });
+  }
+});
+
+// Get subscription statistics
+app.get("/api/admin/subscriptions/stats", async (req, res) => {
+  try {
+    const totalSubscriptions = await subscriptionCollection.countDocuments();
+    const activeSubscriptions = await subscriptionCollection.countDocuments({ 
+      status: "active" 
+    });
+    const cancelledSubscriptions = await subscriptionCollection.countDocuments({ 
+      status: "cancelled" 
+    });
+    const expiredSubscriptions = await subscriptionCollection.countDocuments({ 
+      status: "expired" 
+    });
+    
+    // Get unique users with premium plan
+    const premiumUsers = await userCollection.countDocuments({ 
+      plan: "premium" 
+    });
+    
+    // Get recent subscriptions (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const recentSubscriptions = await subscriptionCollection.countDocuments({
+      subscribedAt: { $gte: thirtyDaysAgo }
+    });
+    
+    // Get revenue stats (if you have amount field)
+    // const totalRevenue = await subscriptionCollection.aggregate([
+    //   { $group: { _id: null, total: { $sum: "$amount" } } }
+    // ]).toArray();
+    
+    res.json({
+      totalSubscriptions,
+      activeSubscriptions,
+      cancelledSubscriptions,
+      expiredSubscriptions,
+      premiumUsers,
+      recentSubscriptions,
+      // totalRevenue: totalRevenue[0]?.total || 0
+    });
+  } catch (error) {
+    console.error("Error fetching subscription stats:", error);
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
+// Update subscription status
+app.patch("/api/admin/subscriptions/:id/status", async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+
+  if (!["active", "cancelled", "expired"].includes(status)) {
+    return res.status(400).json({ error: "Invalid status" });
+  }
+
+  const result = await subscriptionCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { 
+      $set: { 
+        status: status,
+        updatedAt: new Date()
+      } 
+    }
+  );
+
+  if (result.modifiedCount === 0) {
+    return res.status(404).json({ error: "Subscription not found" });
+  }
+
+  // If cancelled, update user plan
+  if (status === "cancelled") {
+    const subscription = await subscriptionCollection.findOne({ _id: new ObjectId(id) });
+    if (subscription) {
+      await userCollection.updateOne(
+        { email: subscription.email },
+        { $set: { plan: "free_user" } }
+      );
+    }
+  }
+
+  const updatedSubscription = await subscriptionCollection.findOne({ _id: new ObjectId(id) });
+  res.json({ 
+    message: `Subscription ${status} successfully`,
+    subscription: updatedSubscription 
+  });
 });
 
 
