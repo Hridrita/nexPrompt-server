@@ -33,6 +33,7 @@ async function run() {
     const bookmarkCollection = db.collection("bookmark");
     const reportCollection = db.collection("reports");
     const subscriptionCollection = db.collection("subscriptions");
+   const notificationCollection = db.collection("notifications");
 
     //prompt related api's
 
@@ -615,6 +616,137 @@ app.patch("/api/admin/prompts/:id/status", async (req, res) => {
     message: `Prompt ${status} successfully`,
     prompt: updatedPrompt 
   });
+});
+
+
+
+
+// user managemnet api
+
+// Get all users with their prompt counts
+app.get("/api/admin/users", async (req, res) => {
+  try {
+    const users = await userCollection.find().toArray();
+    
+    // Get prompt count for each user
+    const usersWithStats = await Promise.all(
+      users.map(async (user) => {
+        const promptCount = await promptCollection.countDocuments({ 
+          creatorsId: user._id.toString() 
+        });
+        
+        const approvedCount = await promptCollection.countDocuments({ 
+          creatorsId: user._id.toString(),
+          status: "approved"
+        });
+        
+        const pendingCount = await promptCollection.countDocuments({ 
+          creatorsId: user._id.toString(),
+          status: "pending"
+        });
+        
+        return {
+          ...user,
+          promptCount,
+          approvedCount,
+          pendingCount,
+          _id: user._id.toString()
+        };
+      })
+    );
+    
+    res.send(usersWithStats);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// Update user role
+app.patch("/api/admin/users/:userId/role", async (req, res) => {
+  const userId = req.params.userId;
+  const { role } = req.body;
+
+  if (!["user", "creator", "admin"].includes(role)) {
+    return res.status(400).json({ error: "Invalid role" });
+  }
+
+  const result = await userCollection.updateOne(
+    { _id: new ObjectId(userId) },
+    { 
+      $set: { 
+        role: role,
+        updatedAt: new Date()
+      } 
+    }
+  );
+
+  if (result.modifiedCount === 0) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  const updatedUser = await userCollection.findOne({ _id: new ObjectId(userId) });
+  res.json({ 
+    message: `User role updated to ${role}`,
+    user: updatedUser 
+  });
+});
+
+// Delete user
+app.delete("/api/admin/users/:userId", async (req, res) => {
+  const userId = req.params.userId;
+
+  try {
+    const user = await userCollection.findOne({ _id: new ObjectId(userId) });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    
+    await promptCollection.deleteMany({ creatorsId: userId });
+    
+   
+    await bookmarkCollection.deleteMany({ userId: userId });
+    
+    
+    await reportCollection.deleteMany({ creatorId: userId });
+    
+    
+    const result = await userCollection.deleteOne({ _id: new ObjectId(userId) });
+    
+    res.json({ 
+      message: `User ${user.email} deleted successfully`,
+      deletedId: userId 
+    });
+  } catch (error) {
+    console.error("Delete user error:", error);
+    res.status(500).json({ error: "Failed to delete user" });
+  }
+});
+
+// Get user statistics
+app.get("/api/admin/users/stats", async (req, res) => {
+  try {
+    const totalUsers = await userCollection.countDocuments();
+    const adminUsers = await userCollection.countDocuments({ role: "admin" });
+    const creatorUsers = await userCollection.countDocuments({ role: "creator" });
+    const regularUsers = await userCollection.countDocuments({ role: "user" });
+    
+    const premiumUsers = await userCollection.countDocuments({ plan: "premium" });
+    const freeUsers = await userCollection.countDocuments({ plan: { $ne: "premium" } });
+    
+    res.json({
+      totalUsers,
+      adminUsers,
+      creatorUsers,
+      regularUsers,
+      premiumUsers,
+      freeUsers
+    });
+  } catch (error) {
+    console.error("Error fetching stats:", error);
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
 });
 
 
