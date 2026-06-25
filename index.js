@@ -33,7 +33,7 @@ async function run() {
     const bookmarkCollection = db.collection("bookmark");
     const reportCollection = db.collection("reports");
     const subscriptionCollection = db.collection("subscriptions");
-   const notificationCollection = db.collection("notifications");
+    const notificationCollection = db.collection("notifications");
 
     //prompt related api's
 
@@ -71,45 +71,49 @@ async function run() {
     });
 
     app.post("/api/prompts", async (req, res) => {
-      
       const prompt = req.body;
       const creatorId = prompt.creatorsId;
 
-      const user = await userCollection.findOne({ _id: new ObjectId(creatorId) });
+      const user = await userCollection.findOne({
+        _id: new ObjectId(creatorId),
+      });
 
       if (user?.plan !== "premium") {
-    const promptCount = await promptCollection.countDocuments({ creatorsId: creatorId });
-    
-    if (promptCount >= 3) {
-      return res.status(403).json({ 
-        error: "Limit reached", 
-        message: "You have reached the limit of 3 prompts. Please upgrade to premium." 
-      });
-    }
-  }
+        const promptCount = await promptCollection.countDocuments({
+          creatorsId: creatorId,
+        });
+
+        if (promptCount >= 3) {
+          return res.status(403).json({
+            error: "Limit reached",
+            message:
+              "You have reached the limit of 3 prompts. Please upgrade to premium.",
+          });
+        }
+      }
       const newPrompt = {
-  ...prompt,
-  copyCount: 0,           
-  status: "pending",     
-  createdAt: new Date(),
-  updatedAt: new Date(),  
-  reviews: [],            
-  rating: 0,              
-  bookmarkCount: 0        
-};
+        ...prompt,
+        copyCount: 0,
+        status: "pending",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        reviews: [],
+        rating: 0,
+        bookmarkCount: 0,
+      };
 
       const result = await promptCollection.insertOne(newPrompt);
 
       //for notification
       const admins = await userCollection.find({ role: "admin" }).toArray();
-  for (const admin of admins) {
-    await sendNotification(admin._id.toString(), {
-      type: "pending",
-      title: newPrompt.title,
-      message: `📝 New prompt "${newPrompt.title}" submitted by ${user.name || user.email} needs review`,
-      promptId: result.insertedId.toString()
-    });
-  }
+      for (const admin of admins) {
+        await sendNotification(admin._id.toString(), {
+          type: "pending",
+          title: newPrompt.title,
+          message: `📝 New prompt "${newPrompt.title}" submitted by ${user.name || user.email} needs review`,
+          promptId: result.insertedId.toString(),
+        });
+      }
       res.json(result);
     });
 
@@ -136,6 +140,16 @@ async function run() {
       const userId = req.params.userId;
       const result = await promptCollection
         .find({ creatorsId: userId })
+        .toArray();
+      res.send(result);
+    });
+
+    // 3. Get all featured prompts
+    app.get("/api/prompts/featured", async (req, res) => {
+      const result = await promptCollection
+        .find({ featured: true, status: "approved" })
+        .sort({ featuredAt: -1 })
+        .limit(6)
         .toArray();
       res.send(result);
     });
@@ -254,23 +268,25 @@ async function run() {
 
     // user specigiq review get
 
-app.get("/api/reviews/user", async (req, res) => {
-  const { email } = req.query;
-  if (!email) return res.send([]);
+    app.get("/api/reviews/user", async (req, res) => {
+      const { email } = req.query;
+      if (!email) return res.send([]);
 
-  const prompts = await promptCollection.find(
-    { "reviews.email": email },
-    { projection: { title: 1, reviews: 1 } }
-  ).toArray();
+      const prompts = await promptCollection
+        .find(
+          { "reviews.email": email },
+          { projection: { title: 1, reviews: 1 } },
+        )
+        .toArray();
 
-  const userReviews = prompts.flatMap(p =>
-    (p.reviews || [])
-      .filter(r => r.email === email)
-      .map(r => ({ ...r, promptTitle: p.title, promptId: p._id }))
-  );
+      const userReviews = prompts.flatMap((p) =>
+        (p.reviews || [])
+          .filter((r) => r.email === email)
+          .map((r) => ({ ...r, promptTitle: p.title, promptId: p._id })),
+      );
 
-  res.send(userReviews);
-});
+      res.send(userReviews);
+    });
 
     //report realted api
 
@@ -307,10 +323,10 @@ app.get("/api/reviews/user", async (req, res) => {
       const result = await subscriptionCollection.insertOne(subscription);
 
       // Send notification to user
-  await sendNotification(userId, {
-    type: "subscription",
-    message: `🎉 You have successfully subscribed to the Premium plan!`,
-  });
+      await sendNotification(userId, {
+        type: "subscription",
+        message: `🎉 You have successfully subscribed to the Premium plan!`,
+      });
       res.send(result);
     });
 
@@ -325,1146 +341,1246 @@ app.get("/api/reviews/user", async (req, res) => {
       res.send(result);
     });
 
-
     // admin apis
 
+    app.get("/api/admin/prompts", async (req, res) => {
+      const { status } = req.query;
+      const query = {};
 
-app.get("/api/admin/prompts", async (req, res) => {
-  const { status } = req.query;
-  const query = {};
-  
-  if (status && status !== "all") {
-    query.status = status;
-  }
+      if (status && status !== "all") {
+        query.status = status;
+      }
 
-  const result = await promptCollection
-    .find(query)
-    .sort({ createdAt: -1 })
-    .toArray();
-  
-  
-  const promptsWithCreator = await Promise.all(
-    result.map(async (prompt) => {
-      const creator = await userCollection.findOne(
-        { _id: new ObjectId(prompt.creatorsId) },
-        { projection: { name: 1, email: 1, plan: 1 } }
+      const result = await promptCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      const promptsWithCreator = await Promise.all(
+        result.map(async (prompt) => {
+          const creator = await userCollection.findOne(
+            { _id: new ObjectId(prompt.creatorsId) },
+            { projection: { name: 1, email: 1, plan: 1 } },
+          );
+          return { ...prompt, creator };
+        }),
       );
-      return { ...prompt, creator };
-    })
-  );
 
-  res.send(promptsWithCreator);
-});
+      res.send(promptsWithCreator);
+    });
 
+    app.patch("/api/admin/prompts/:id", async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
 
-app.patch("/api/admin/prompts/:id", async (req, res) => {
-  const id = req.params.id;
-  const { status } = req.body;
+      if (!["approved", "rejected"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
 
-  if (!["approved", "rejected"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
+      const result = await promptCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status: status,
+            updatedAt: new Date(),
+            ...(status === "rejected"
+              ? { rejectionDate: new Date() }
+              : { approvedDate: new Date() }),
+          },
+        },
+      );
 
-  const result = await promptCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { 
-      $set: { 
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: "Prompt not found" });
+      }
+
+      const updatedPrompt = await promptCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      res.json({
+        message: `Prompt ${status} successfully`,
+        prompt: updatedPrompt,
+      });
+    });
+
+    app.get("/api/admin/stats", async (req, res) => {
+      const total = await promptCollection.countDocuments();
+      const pending = await promptCollection.countDocuments({
+        status: "pending",
+      });
+      const approved = await promptCollection.countDocuments({
+        status: "approved",
+      });
+      const rejected = await promptCollection.countDocuments({
+        status: "rejected",
+      });
+
+      const freeUsers = await userCollection
+        .find({ plan: { $ne: "premium" } })
+        .toArray();
+      let usersAtLimit = 0;
+
+      for (const user of freeUsers) {
+        const count = await promptCollection.countDocuments({
+          creatorsId: user._id.toString(),
+        });
+        if (count >= 3) usersAtLimit++;
+      }
+
+      res.json({
+        total,
+        pending,
+        approved,
+        rejected,
+        usersAtLimit,
+      });
+    });
+
+    // 1. Update prompt status with user notification
+    app.patch("/api/admin/prompts/:id/status", async (req, res) => {
+      const id = req.params.id;
+      const { status, rejectionReason } = req.body;
+
+      if (!["approved", "rejected"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      // Get the prompt first
+      const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
+      if (!prompt) {
+        return res.status(404).json({ error: "Prompt not found" });
+      }
+
+      // Update prompt status
+      const updateData = {
         status: status,
         updatedAt: new Date(),
-        ...(status === "rejected" ? { rejectionDate: new Date() } : { approvedDate: new Date() })
-      } 
-    }
-  );
-
-  if (result.modifiedCount === 0) {
-    return res.status(404).json({ error: "Prompt not found" });
-  }
-
-  const updatedPrompt = await promptCollection.findOne({ _id: new ObjectId(id) });
-  res.json({ 
-    message: `Prompt ${status} successfully`,
-    prompt: updatedPrompt 
-  });
-});
-
-
-app.get("/api/admin/stats", async (req, res) => {
-  const total = await promptCollection.countDocuments();
-  const pending = await promptCollection.countDocuments({ status: "pending" });
-  const approved = await promptCollection.countDocuments({ status: "approved" });
-  const rejected = await promptCollection.countDocuments({ status: "rejected" });
-  
-  
-  const freeUsers = await userCollection.find({ plan: { $ne: "premium" } }).toArray();
-  let usersAtLimit = 0;
-  
-  for (const user of freeUsers) {
-    const count = await promptCollection.countDocuments({ creatorsId: user._id.toString() });
-    if (count >= 3) usersAtLimit++;
-  }
-
-  res.json({
-    total,
-    pending,
-    approved,
-    rejected,
-    usersAtLimit
-  });
-});
-
-
-
-// 1. Update prompt status with user notification
-app.patch("/api/admin/prompts/:id/status", async (req, res) => {
-  const id = req.params.id;
-  const { status, rejectionReason } = req.body;
-
-  if (!["approved", "rejected"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
-
-  // Get the prompt first
-  const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
-  if (!prompt) {
-    return res.status(404).json({ error: "Prompt not found" });
-  }
-
-  // Update prompt status
-  const updateData = {
-    status: status,
-    updatedAt: new Date(),
-  };
-
-  if (status === "approved") {
-    updateData.approvedAt = new Date();
-  } else if (status === "rejected") {
-    updateData.rejectedAt = new Date();
-    updateData.rejectionReason = rejectionReason || "Did not meet platform guidelines";
-  }
-
-  const result = await promptCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: updateData }
-  );
-
-  if (result.modifiedCount === 0) {
-    return res.status(404).json({ error: "Prompt not found" });
-  }
-
-  const updatedPrompt = await promptCollection.findOne({ _id: new ObjectId(id) });
-
-  // Also update user's prompt count if approved
-  if (status === "approved") {
-    // User already has the prompt in their list, no need to update count
-    // But we can log or notify
-    console.log(`Prompt ${prompt.title} approved for user ${prompt.creatorsId}`);
-  }
-
-  res.json({ 
-    message: `Prompt ${status} successfully`,
-    prompt: updatedPrompt 
-  });
-});
-
-// 2. Get pending prompts count for admin
-app.get("/api/admin/pending-count", async (req, res) => {
-  const pendingCount = await promptCollection.countDocuments({ status: "pending" });
-  res.json({ pendingCount });
-});
-
-
-
-
-// new admin apis
-
-// 1. Delete prompt (admin)
-app.delete("/api/admin/prompts/:id", async (req, res) => {
-  const id = req.params.id;
-  
-  try {
-    // First get the prompt to notify user
-    const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
-    if (!prompt) {
-      return res.status(404).json({ error: "Prompt not found" });
-    }
-
-    const result = await promptCollection.deleteOne({ _id: new ObjectId(id) });
-    
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ error: "Prompt not found" });
-    }
-
-    // Send notification to user
-    await sendNotification(prompt.creatorsId, {
-      type: "deleted",
-      title: prompt.title,
-      message: `Your prompt "${prompt.title}" has been deleted by admin.`,
-    });
-
-    res.json({ 
-      message: "Prompt deleted successfully",
-      deletedId: id 
-    });
-  } catch (error) {
-    console.error("Delete error:", error);
-    res.status(500).json({ error: "Failed to delete prompt" });
-  }
-});
-
-// 2. Feature/Unfeature prompt
-app.patch("/api/admin/prompts/:id/feature", async (req, res) => {
-  const id = req.params.id;
-  const { featured } = req.body; // boolean
-
-  const result = await promptCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { 
-      $set: { 
-        featured: featured || false,
-        featuredAt: featured ? new Date() : null,
-        updatedAt: new Date()
-      } 
-    }
-  );
-
-
-  if (result.modifiedCount === 0) {
-    return res.status(404).json({ error: "Prompt not found" });
-  }
-
-  const updatedPrompt = await promptCollection.findOne({ _id: new ObjectId(id) });
-
-  if (featured) {
-    await sendNotification(prompt.creatorsId, {
-      type: "featured",
-      message: `⭐ Your prompt "${prompt.title}" has been featured!`,
-      promptId: id,
-      title: prompt.title
-    });
-  }
-  res.json({ 
-    message: featured ? "Prompt featured successfully" : "Prompt unfeatured successfully",
-    prompt: updatedPrompt 
-  });
-});
-
-// 3. Get all featured prompts
-app.get("/api/prompts/featured", async (req, res) => {
-  const result = await promptCollection
-    .find({ featured: true, status: "approved" })
-    .sort({ featuredAt: -1 })
-    .toArray();
-  res.send(result);
-});
-
-// Helper function to send notification
-async function sendNotification(userId, data) {
-  const db = client.db("nexPrompt_db");
-  const notificationCollection = db.collection("notifications");
-  
-  await notificationCollection.insertOne({
-    userId: userId,
-    ...data,
-    read: false,
-    createdAt: new Date()
-  });
-}
-
-// 4. Get user notifications
-app.get("/api/notifications/:userId", async (req, res) => {
-  const userId = req.params.userId;
-  const notifications = await notificationCollection
-    .find({ userId: userId })
-    .sort({ createdAt: -1 })
-    .toArray();
-  res.send(notifications);
-});
-
-// 5. Mark notification as read
-app.patch("/api/notifications/:id/read", async (req, res) => {
-  const id = req.params.id;
-  const result = await notificationCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: { read: true } }
-  );
-  res.send(result);
-});
-
-// Update existing status API with notification
-app.patch("/api/admin/prompts/:id/status", async (req, res) => {
-  const id = req.params.id;
-  const { status, rejectionReason } = req.body;
-
-  if (!["approved", "rejected"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
-
-  const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
-  if (!prompt) {
-    return res.status(404).json({ error: "Prompt not found" });
-  }
-
-  const updateData = {
-    status: status,
-    updatedAt: new Date(),
-  };
-
-  if (status === "approved") {
-    updateData.approvedAt = new Date();
-    // Send approval notification
-    await sendNotification(prompt.creatorsId, {
-      type: "approved",
-      title: prompt.title,
-      message: `✅ Your prompt "${prompt.title}" has been approved and is now live!`,
-    });
-  } else if (status === "rejected") {
-    updateData.rejectedAt = new Date();
-    updateData.rejectionReason = rejectionReason || "Did not meet platform guidelines";
-    // Send rejection notification with feedback
-    await sendNotification(prompt.creatorsId, {
-      type: "rejected",
-      title: prompt.title,
-      message: `❌ Your prompt "${prompt.title}" was rejected.`,
-      feedback: updateData.rejectionReason,
-    });
-  }
-
-  const result = await promptCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: updateData }
-  );
-
-  if (result.modifiedCount === 0) {
-    return res.status(404).json({ error: "Prompt not found" });
-  }
-
-  const updatedPrompt = await promptCollection.findOne({ _id: new ObjectId(id) });
-  res.json({ 
-    message: `Prompt ${status} successfully`,
-    prompt: updatedPrompt 
-  });
-});
-
-
-
-
-// user managemnet api
-
-// Get all users with their prompt counts
-app.get("/api/admin/users", async (req, res) => {
-  try {
-    const users = await userCollection.find().toArray();
-    
-    // Get prompt count for each user
-    const usersWithStats = await Promise.all(
-      users.map(async (user) => {
-        const promptCount = await promptCollection.countDocuments({ 
-          creatorsId: user._id.toString() 
-        });
-        
-        const approvedCount = await promptCollection.countDocuments({ 
-          creatorsId: user._id.toString(),
-          status: "approved"
-        });
-        
-        const pendingCount = await promptCollection.countDocuments({ 
-          creatorsId: user._id.toString(),
-          status: "pending"
-        });
-        
-        return {
-          ...user,
-          promptCount,
-          approvedCount,
-          pendingCount,
-          _id: user._id.toString()
-        };
-      })
-    );
-    
-    res.send(usersWithStats);
-  } catch (error) {
-    console.error("Error fetching users:", error);
-    res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
-
-// Update user role
-app.patch("/api/admin/users/:userId/role", async (req, res) => {
-  const userId = req.params.userId;
-  const { role } = req.body;
-
-  if (!["user", "creator", "admin"].includes(role)) {
-    return res.status(400).json({ error: "Invalid role" });
-  }
-
-  const result = await userCollection.updateOne(
-    { _id: new ObjectId(userId) },
-    { 
-      $set: { 
-        role: role,
-        updatedAt: new Date()
-      } 
-    }
-  );
-
-  if (result.modifiedCount === 0) {
-    return res.status(404).json({ error: "User not found" });
-  }
-
-  const updatedUser = await userCollection.findOne({ _id: new ObjectId(userId) });
-  res.json({ 
-    message: `User role updated to ${role}`,
-    user: updatedUser 
-  });
-});
-
-// Delete user
-app.delete("/api/admin/users/:userId", async (req, res) => {
-  const userId = req.params.userId;
-
-  try {
-    const user = await userCollection.findOne({ _id: new ObjectId(userId) });
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    
-    await promptCollection.deleteMany({ creatorsId: userId });
-    
-   
-    await bookmarkCollection.deleteMany({ userId: userId });
-    
-    
-    await reportCollection.deleteMany({ creatorId: userId });
-    
-    
-    const result = await userCollection.deleteOne({ _id: new ObjectId(userId) });
-    
-    res.json({ 
-      message: `User ${user.email} deleted successfully`,
-      deletedId: userId 
-    });
-  } catch (error) {
-    console.error("Delete user error:", error);
-    res.status(500).json({ error: "Failed to delete user" });
-  }
-});
-
-// Get user statistics
-app.get("/api/admin/users/stats", async (req, res) => {
-  try {
-    const totalUsers = await userCollection.countDocuments();
-    const adminUsers = await userCollection.countDocuments({ role: "admin" });
-    const creatorUsers = await userCollection.countDocuments({ role: "creator" });
-    const regularUsers = await userCollection.countDocuments({ role: "user" });
-    
-    const premiumUsers = await userCollection.countDocuments({ plan: "premium" });
-    const freeUsers = await userCollection.countDocuments({ plan: { $ne: "premium" } });
-    
-    res.json({
-      totalUsers,
-      adminUsers,
-      creatorUsers,
-      regularUsers,
-      premiumUsers,
-      freeUsers
-    });
-  } catch (error) {
-    console.error("Error fetching stats:", error);
-    res.status(500).json({ error: "Failed to fetch stats" });
-  }
-});
-
-
-
-// payment management
-
-// Get all subscriptions with user details
-app.get("/api/admin/subscriptions", async (req, res) => {
-  try {
-    const subscriptions = await subscriptionCollection
-      .find()
-      .sort({ subscribedAt: -1 })
-      .toArray();
-    
-    // Get user details for each subscription
-    const subscriptionsWithUser = await Promise.all(
-      subscriptions.map(async (sub) => {
-        const user = await userCollection.findOne(
-          { email: sub.email },
-          { projection: { name: 1, email: 1, plan: 1, role: 1, _id: 1 } }
-        );
-        return {
-          ...sub,
-          _id: sub._id.toString(),
-          user: user || { name: "Unknown", email: sub.email }
-        };
-      })
-    );
-    
-    res.send(subscriptionsWithUser);
-  } catch (error) {
-    console.error("Error fetching subscriptions:", error);
-    res.status(500).json({ error: "Failed to fetch subscriptions" });
-  }
-});
-
-// Get subscription statistics
-app.get("/api/admin/subscriptions/stats", async (req, res) => {
-  try {
-    const totalSubscriptions = await subscriptionCollection.countDocuments();
-    const activeSubscriptions = await subscriptionCollection.countDocuments({ 
-      status: "active" 
-    });
-    const cancelledSubscriptions = await subscriptionCollection.countDocuments({ 
-      status: "cancelled" 
-    });
-    const expiredSubscriptions = await subscriptionCollection.countDocuments({ 
-      status: "expired" 
-    });
-    
-    // Get unique users with premium plan
-    const premiumUsers = await userCollection.countDocuments({ 
-      plan: "premium" 
-    });
-    
-    // Get recent subscriptions (last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const recentSubscriptions = await subscriptionCollection.countDocuments({
-      subscribedAt: { $gte: thirtyDaysAgo }
-    });
-    
-    // Get revenue stats (if you have amount field)
-    // const totalRevenue = await subscriptionCollection.aggregate([
-    //   { $group: { _id: null, total: { $sum: "$amount" } } }
-    // ]).toArray();
-    
-    res.json({
-      totalSubscriptions,
-      activeSubscriptions,
-      cancelledSubscriptions,
-      expiredSubscriptions,
-      premiumUsers,
-      recentSubscriptions,
-      // totalRevenue: totalRevenue[0]?.total || 0
-    });
-  } catch (error) {
-    console.error("Error fetching subscription stats:", error);
-    res.status(500).json({ error: "Failed to fetch stats" });
-  }
-});
-
-// Update subscription status
-app.patch("/api/admin/subscriptions/:id/status", async (req, res) => {
-  const id = req.params.id;
-  const { status } = req.body;
-
-  if (!["active", "cancelled", "expired"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
-
-  const result = await subscriptionCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { 
-      $set: { 
-        status: status,
-        updatedAt: new Date()
-      } 
-    }
-  );
-
-  if (result.modifiedCount === 0) {
-    return res.status(404).json({ error: "Subscription not found" });
-  }
-
-  // If cancelled, update user plan
-  if (status === "cancelled") {
-    const subscription = await subscriptionCollection.findOne({ _id: new ObjectId(id) });
-    if (subscription) {
-      await userCollection.updateOne(
-        { email: subscription.email },
-        { $set: { plan: "free_user" } }
+      };
+
+      if (status === "approved") {
+        updateData.approvedAt = new Date();
+      } else if (status === "rejected") {
+        updateData.rejectedAt = new Date();
+        updateData.rejectionReason =
+          rejectionReason || "Did not meet platform guidelines";
+      }
+
+      const result = await promptCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateData },
       );
-    }
-  }
 
-  const updatedSubscription = await subscriptionCollection.findOne({ _id: new ObjectId(id) });
-  res.json({ 
-    message: `Subscription ${status} successfully`,
-    subscription: updatedSubscription 
-  });
-});
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: "Prompt not found" });
+      }
 
+      const updatedPrompt = await promptCollection.findOne({
+        _id: new ObjectId(id),
+      });
 
-//reports api
-
-
-// Get all reports with prompt and user details
-app.get("/api/admin/reports", async (req, res) => {
-  try {
-    const reports = await reportCollection
-      .find()
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    // Get prompt and user details for each report
-    const reportsWithDetails = await Promise.all(
-      reports.map(async (report) => {
-        // Get prompt details
-        const prompt = await promptCollection.findOne(
-          { _id: new ObjectId(report.promptId) },
-          { projection: { title: 1, description: 1, thumbnail: 1, creatorsId: 1, status: 1 } }
+      // Also update user's prompt count if approved
+      if (status === "approved") {
+        // User already has the prompt in their list, no need to update count
+        // But we can log or notify
+        console.log(
+          `Prompt ${prompt.title} approved for user ${prompt.creatorsId}`,
         );
+      }
 
-        // Get creator details
-        let creator = null;
-        if (prompt?.creatorsId) {
-          creator = await userCollection.findOne(
-            { _id: new ObjectId(prompt.creatorsId) },
-            { projection: { name: 1, email: 1 } }
-          );
+      res.json({
+        message: `Prompt ${status} successfully`,
+        prompt: updatedPrompt,
+      });
+    });
+
+    // 2. Get pending prompts count for admin
+    app.get("/api/admin/pending-count", async (req, res) => {
+      const pendingCount = await promptCollection.countDocuments({
+        status: "pending",
+      });
+      res.json({ pendingCount });
+    });
+
+    // new admin apis
+
+    // 1. Delete prompt (admin)
+    app.delete("/api/admin/prompts/:id", async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        // First get the prompt to notify user
+        const prompt = await promptCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!prompt) {
+          return res.status(404).json({ error: "Prompt not found" });
         }
 
-        return {
-          ...report,
-          _id: report._id.toString(),
-          prompt: prompt || null,
-          creator: creator || null,
-        };
-      })
-    );
+        const result = await promptCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
 
-    res.send(reportsWithDetails);
-  } catch (error) {
-    console.error("Error fetching reports:", error);
-    res.status(500).json({ error: "Failed to fetch reports" });
-  }
-});
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: "Prompt not found" });
+        }
 
-// Remove prompt and all its reports
-app.delete("/api/admin/reports/:promptId/remove", async (req, res) => {
-  const promptId = req.params.promptId;
+        // Send notification to user
+        await sendNotification(prompt.creatorsId, {
+          type: "deleted",
+          title: prompt.title,
+          message: `Your prompt "${prompt.title}" has been deleted by admin.`,
+        });
 
-  try {
-    // Get prompt first
-    const prompt = await promptCollection.findOne({ _id: new ObjectId(promptId) });
-    if (!prompt) {
-      return res.status(404).json({ error: "Prompt not found" });
-    }
-
-    // Delete the prompt
-    await promptCollection.deleteOne({ _id: new ObjectId(promptId) });
-
-    // Delete all reports for this prompt
-    await reportCollection.deleteMany({ promptId: promptId });
-
-    // Send notification to creator
-    await sendNotification(prompt.creatorsId, {
-      type: "deleted",
-      title: prompt.title,
-      message: `Your prompt "${prompt.title}" has been removed due to multiple reports.`,
-    });
-
-    res.json({
-      message: `Prompt "${prompt.title}" removed successfully`,
-      promptId: promptId,
-    });
-  } catch (error) {
-    console.error("Error removing prompt:", error);
-    res.status(500).json({ error: "Failed to remove prompt" });
-  }
-});
-
-// Warn creator
-app.patch("/api/admin/reports/:promptId/warn", async (req, res) => {
-  const promptId = req.params.promptId;
-  const { warningMessage } = req.body;
-
-  try {
-    const prompt = await promptCollection.findOne({ _id: new ObjectId(promptId) });
-    if (!prompt) {
-      return res.status(404).json({ error: "Prompt not found" });
-    }
-
-    // Update prompt with warning
-    await promptCollection.updateOne(
-      { _id: new ObjectId(promptId) },
-      {
-        $set: {
-          warned: true,
-          warningMessage: warningMessage || "Your prompt has been reported. Please review our guidelines.",
-          warnedAt: new Date(),
-          updatedAt: new Date(),
-        },
+        res.json({
+          message: "Prompt deleted successfully",
+          deletedId: id,
+        });
+      } catch (error) {
+        console.error("Delete error:", error);
+        res.status(500).json({ error: "Failed to delete prompt" });
       }
-    );
-
-    // Send warning notification to creator
-    await sendNotification(prompt.creatorsId, {
-      type: "warning",
-      title: prompt.title,
-      message: `Warning: Your prompt "${prompt.title}" has been reported.`,
-      feedback: warningMessage || "Please review our community guidelines.",
     });
 
-    res.json({
-      message: `Warning sent to creator of "${prompt.title}"`,
-      promptId: promptId,
+    // 2. Feature/Unfeature prompt
+    app.patch("/api/admin/prompts/:id/feature", async (req, res) => {
+      const id = req.params.id;
+      const { featured } = req.body; // boolean
+
+      const result = await promptCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            featured: featured || false,
+            featuredAt: featured ? new Date() : null,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: "Prompt not found" });
+      }
+
+      const updatedPrompt = await promptCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (featured) {
+        await sendNotification(prompt.creatorsId, {
+          type: "featured",
+          message: `⭐ Your prompt "${prompt.title}" has been featured!`,
+          promptId: id,
+          title: prompt.title,
+        });
+      }
+      res.json({
+        message: featured
+          ? "Prompt featured successfully"
+          : "Prompt unfeatured successfully",
+        prompt: updatedPrompt,
+      });
     });
-  } catch (error) {
-    console.error("Error warning creator:", error);
-    res.status(500).json({ error: "Failed to warn creator" });
-  }
-});
 
-// Dismiss report (not harmful)
-app.patch("/api/admin/reports/:reportId/dismiss", async (req, res) => {
-  const reportId = req.params.reportId;
+    // 3. Get all featured prompts
+    app.get("/api/prompts/featured", async (req, res) => {
+      const result = await promptCollection
+        .find({ featured: true, status: "approved" })
+        .sort({ featuredAt: -1 })
+        .toArray();
+      res.send(result);
+    });
 
-  try {
-    const report = await reportCollection.findOne({ _id: new ObjectId(reportId) });
-    if (!report) {
-      return res.status(404).json({ error: "Report not found" });
+    // Helper function to send notification
+    async function sendNotification(userId, data) {
+      const db = client.db("nexPrompt_db");
+      const notificationCollection = db.collection("notifications");
+
+      await notificationCollection.insertOne({
+        userId: userId,
+        ...data,
+        read: false,
+        createdAt: new Date(),
+      });
     }
 
-    // Update report status
-    await reportCollection.updateOne(
-      { _id: new ObjectId(reportId) },
-      {
-        $set: {
+    // 4. Get user notifications
+    app.get("/api/notifications/:userId", async (req, res) => {
+      const userId = req.params.userId;
+      const notifications = await notificationCollection
+        .find({ userId: userId })
+        .sort({ createdAt: -1 })
+        .toArray();
+      res.send(notifications);
+    });
+
+    // 5. Mark notification as read
+    app.patch("/api/notifications/:id/read", async (req, res) => {
+      const id = req.params.id;
+      const result = await notificationCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { read: true } },
+      );
+      res.send(result);
+    });
+
+    // Update existing status API with notification
+    app.patch("/api/admin/prompts/:id/status", async (req, res) => {
+      const id = req.params.id;
+      const { status, rejectionReason } = req.body;
+
+      if (!["approved", "rejected"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
+      if (!prompt) {
+        return res.status(404).json({ error: "Prompt not found" });
+      }
+
+      const updateData = {
+        status: status,
+        updatedAt: new Date(),
+      };
+
+      if (status === "approved") {
+        updateData.approvedAt = new Date();
+        // Send approval notification
+        await sendNotification(prompt.creatorsId, {
+          type: "approved",
+          title: prompt.title,
+          message: `✅ Your prompt "${prompt.title}" has been approved and is now live!`,
+        });
+      } else if (status === "rejected") {
+        updateData.rejectedAt = new Date();
+        updateData.rejectionReason =
+          rejectionReason || "Did not meet platform guidelines";
+        // Send rejection notification with feedback
+        await sendNotification(prompt.creatorsId, {
+          type: "rejected",
+          title: prompt.title,
+          message: `❌ Your prompt "${prompt.title}" was rejected.`,
+          feedback: updateData.rejectionReason,
+        });
+      }
+
+      const result = await promptCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateData },
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: "Prompt not found" });
+      }
+
+      const updatedPrompt = await promptCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      res.json({
+        message: `Prompt ${status} successfully`,
+        prompt: updatedPrompt,
+      });
+    });
+
+    // user managemnet api
+
+    // Get all users with their prompt counts
+    app.get("/api/admin/users", async (req, res) => {
+      try {
+        const users = await userCollection.find().toArray();
+
+        // Get prompt count for each user
+        const usersWithStats = await Promise.all(
+          users.map(async (user) => {
+            const promptCount = await promptCollection.countDocuments({
+              creatorsId: user._id.toString(),
+            });
+
+            const approvedCount = await promptCollection.countDocuments({
+              creatorsId: user._id.toString(),
+              status: "approved",
+            });
+
+            const pendingCount = await promptCollection.countDocuments({
+              creatorsId: user._id.toString(),
+              status: "pending",
+            });
+
+            return {
+              ...user,
+              promptCount,
+              approvedCount,
+              pendingCount,
+              _id: user._id.toString(),
+            };
+          }),
+        );
+
+        res.send(usersWithStats);
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        res.status(500).json({ error: "Failed to fetch users" });
+      }
+    });
+
+    // Update user role
+    app.patch("/api/admin/users/:userId/role", async (req, res) => {
+      const userId = req.params.userId;
+      const { role } = req.body;
+
+      if (!["user", "creator", "admin"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+
+      const result = await userCollection.updateOne(
+        { _id: new ObjectId(userId) },
+        {
+          $set: {
+            role: role,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const updatedUser = await userCollection.findOne({
+        _id: new ObjectId(userId),
+      });
+      res.json({
+        message: `User role updated to ${role}`,
+        user: updatedUser,
+      });
+    });
+
+    // Delete user
+    app.delete("/api/admin/users/:userId", async (req, res) => {
+      const userId = req.params.userId;
+
+      try {
+        const user = await userCollection.findOne({
+          _id: new ObjectId(userId),
+        });
+        if (!user) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        await promptCollection.deleteMany({ creatorsId: userId });
+
+        await bookmarkCollection.deleteMany({ userId: userId });
+
+        await reportCollection.deleteMany({ creatorId: userId });
+
+        const result = await userCollection.deleteOne({
+          _id: new ObjectId(userId),
+        });
+
+        res.json({
+          message: `User ${user.email} deleted successfully`,
+          deletedId: userId,
+        });
+      } catch (error) {
+        console.error("Delete user error:", error);
+        res.status(500).json({ error: "Failed to delete user" });
+      }
+    });
+
+    // Get user statistics
+    app.get("/api/admin/users/stats", async (req, res) => {
+      try {
+        const totalUsers = await userCollection.countDocuments();
+        const adminUsers = await userCollection.countDocuments({
+          role: "admin",
+        });
+        const creatorUsers = await userCollection.countDocuments({
+          role: "creator",
+        });
+        const regularUsers = await userCollection.countDocuments({
+          role: "user",
+        });
+
+        const premiumUsers = await userCollection.countDocuments({
+          plan: "premium",
+        });
+        const freeUsers = await userCollection.countDocuments({
+          plan: { $ne: "premium" },
+        });
+
+        res.json({
+          totalUsers,
+          adminUsers,
+          creatorUsers,
+          regularUsers,
+          premiumUsers,
+          freeUsers,
+        });
+      } catch (error) {
+        console.error("Error fetching stats:", error);
+        res.status(500).json({ error: "Failed to fetch stats" });
+      }
+    });
+
+    // payment management
+
+    // Get all subscriptions with user details
+    app.get("/api/admin/subscriptions", async (req, res) => {
+      try {
+        const subscriptions = await subscriptionCollection
+          .find()
+          .sort({ subscribedAt: -1 })
+          .toArray();
+
+        // Get user details for each subscription
+        const subscriptionsWithUser = await Promise.all(
+          subscriptions.map(async (sub) => {
+            const user = await userCollection.findOne(
+              { email: sub.email },
+              { projection: { name: 1, email: 1, plan: 1, role: 1, _id: 1 } },
+            );
+            return {
+              ...sub,
+              _id: sub._id.toString(),
+              user: user || { name: "Unknown", email: sub.email },
+            };
+          }),
+        );
+
+        res.send(subscriptionsWithUser);
+      } catch (error) {
+        console.error("Error fetching subscriptions:", error);
+        res.status(500).json({ error: "Failed to fetch subscriptions" });
+      }
+    });
+
+    // Get subscription statistics
+    app.get("/api/admin/subscriptions/stats", async (req, res) => {
+      try {
+        const totalSubscriptions =
+          await subscriptionCollection.countDocuments();
+        const activeSubscriptions = await subscriptionCollection.countDocuments(
+          {
+            status: "active",
+          },
+        );
+        const cancelledSubscriptions =
+          await subscriptionCollection.countDocuments({
+            status: "cancelled",
+          });
+        const expiredSubscriptions =
+          await subscriptionCollection.countDocuments({
+            status: "expired",
+          });
+
+        // Get unique users with premium plan
+        const premiumUsers = await userCollection.countDocuments({
+          plan: "premium",
+        });
+
+        // Get recent subscriptions (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const recentSubscriptions = await subscriptionCollection.countDocuments(
+          {
+            subscribedAt: { $gte: thirtyDaysAgo },
+          },
+        );
+
+        // Get revenue stats (if you have amount field)
+        // const totalRevenue = await subscriptionCollection.aggregate([
+        //   { $group: { _id: null, total: { $sum: "$amount" } } }
+        // ]).toArray();
+
+        res.json({
+          totalSubscriptions,
+          activeSubscriptions,
+          cancelledSubscriptions,
+          expiredSubscriptions,
+          premiumUsers,
+          recentSubscriptions,
+          // totalRevenue: totalRevenue[0]?.total || 0
+        });
+      } catch (error) {
+        console.error("Error fetching subscription stats:", error);
+        res.status(500).json({ error: "Failed to fetch stats" });
+      }
+    });
+
+    // Update subscription status
+    app.patch("/api/admin/subscriptions/:id/status", async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+
+      if (!["active", "cancelled", "expired"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const result = await subscriptionCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status: status,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ error: "Subscription not found" });
+      }
+
+      // If cancelled, update user plan
+      if (status === "cancelled") {
+        const subscription = await subscriptionCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (subscription) {
+          await userCollection.updateOne(
+            { email: subscription.email },
+            { $set: { plan: "free_user" } },
+          );
+        }
+      }
+
+      const updatedSubscription = await subscriptionCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      res.json({
+        message: `Subscription ${status} successfully`,
+        subscription: updatedSubscription,
+      });
+    });
+
+    //reports api
+
+    // Get all reports with prompt and user details
+    app.get("/api/admin/reports", async (req, res) => {
+      try {
+        const reports = await reportCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        // Get prompt and user details for each report
+        const reportsWithDetails = await Promise.all(
+          reports.map(async (report) => {
+            // Get prompt details
+            const prompt = await promptCollection.findOne(
+              { _id: new ObjectId(report.promptId) },
+              {
+                projection: {
+                  title: 1,
+                  description: 1,
+                  thumbnail: 1,
+                  creatorsId: 1,
+                  status: 1,
+                },
+              },
+            );
+
+            // Get creator details
+            let creator = null;
+            if (prompt?.creatorsId) {
+              creator = await userCollection.findOne(
+                { _id: new ObjectId(prompt.creatorsId) },
+                { projection: { name: 1, email: 1 } },
+              );
+            }
+
+            return {
+              ...report,
+              _id: report._id.toString(),
+              prompt: prompt || null,
+              creator: creator || null,
+            };
+          }),
+        );
+
+        res.send(reportsWithDetails);
+      } catch (error) {
+        console.error("Error fetching reports:", error);
+        res.status(500).json({ error: "Failed to fetch reports" });
+      }
+    });
+
+    // Remove prompt and all its reports
+    app.delete("/api/admin/reports/:promptId/remove", async (req, res) => {
+      const promptId = req.params.promptId;
+
+      try {
+        // Get prompt first
+        const prompt = await promptCollection.findOne({
+          _id: new ObjectId(promptId),
+        });
+        if (!prompt) {
+          return res.status(404).json({ error: "Prompt not found" });
+        }
+
+        // Delete the prompt
+        await promptCollection.deleteOne({ _id: new ObjectId(promptId) });
+
+        // Delete all reports for this prompt
+        await reportCollection.deleteMany({ promptId: promptId });
+
+        // Send notification to creator
+        await sendNotification(prompt.creatorsId, {
+          type: "deleted",
+          title: prompt.title,
+          message: `Your prompt "${prompt.title}" has been removed due to multiple reports.`,
+        });
+
+        res.json({
+          message: `Prompt "${prompt.title}" removed successfully`,
+          promptId: promptId,
+        });
+      } catch (error) {
+        console.error("Error removing prompt:", error);
+        res.status(500).json({ error: "Failed to remove prompt" });
+      }
+    });
+
+    // Warn creator
+    app.patch("/api/admin/reports/:promptId/warn", async (req, res) => {
+      const promptId = req.params.promptId;
+      const { warningMessage } = req.body;
+
+      try {
+        const prompt = await promptCollection.findOne({
+          _id: new ObjectId(promptId),
+        });
+        if (!prompt) {
+          return res.status(404).json({ error: "Prompt not found" });
+        }
+
+        // Update prompt with warning
+        await promptCollection.updateOne(
+          { _id: new ObjectId(promptId) },
+          {
+            $set: {
+              warned: true,
+              warningMessage:
+                warningMessage ||
+                "Your prompt has been reported. Please review our guidelines.",
+              warnedAt: new Date(),
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        // Send warning notification to creator
+        await sendNotification(prompt.creatorsId, {
+          type: "warning",
+          title: prompt.title,
+          message: `Warning: Your prompt "${prompt.title}" has been reported.`,
+          feedback: warningMessage || "Please review our community guidelines.",
+        });
+
+        res.json({
+          message: `Warning sent to creator of "${prompt.title}"`,
+          promptId: promptId,
+        });
+      } catch (error) {
+        console.error("Error warning creator:", error);
+        res.status(500).json({ error: "Failed to warn creator" });
+      }
+    });
+
+    // Dismiss report (not harmful)
+    app.patch("/api/admin/reports/:reportId/dismiss", async (req, res) => {
+      const reportId = req.params.reportId;
+
+      try {
+        const report = await reportCollection.findOne({
+          _id: new ObjectId(reportId),
+        });
+        if (!report) {
+          return res.status(404).json({ error: "Report not found" });
+        }
+
+        // Update report status
+        await reportCollection.updateOne(
+          { _id: new ObjectId(reportId) },
+          {
+            $set: {
+              status: "dismissed",
+              dismissedAt: new Date(),
+            },
+          },
+        );
+
+        res.json({
+          message: "Report dismissed successfully",
+          reportId: reportId,
+        });
+      } catch (error) {
+        console.error("Error dismissing report:", error);
+        res.status(500).json({ error: "Failed to dismiss report" });
+      }
+    });
+
+    // Get report statistics
+    app.get("/api/admin/reports/stats", async (req, res) => {
+      try {
+        const totalReports = await reportCollection.countDocuments();
+        const pendingReports = await reportCollection.countDocuments({
+          status: { $ne: "dismissed" },
+        });
+        const dismissedReports = await reportCollection.countDocuments({
           status: "dismissed",
-          dismissedAt: new Date(),
-        },
-      }
-    );
+        });
 
-    res.json({
-      message: "Report dismissed successfully",
-      reportId: reportId,
+        // Get unique prompts with reports
+        const uniquePromptIds = await reportCollection.distinct("promptId");
+        const uniquePrompts = uniquePromptIds.length;
+
+        // Get reports by reason
+        const reasons = await reportCollection
+          .aggregate([
+            { $group: { _id: "$reason", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ])
+          .toArray();
+
+        res.json({
+          totalReports,
+          pendingReports,
+          dismissedReports,
+          uniquePrompts,
+          reasons: reasons.map((r) => ({ reason: r._id, count: r.count })),
+        });
+      } catch (error) {
+        console.error("Error fetching report stats:", error);
+        res.status(500).json({ error: "Failed to fetch stats" });
+      }
     });
-  } catch (error) {
-    console.error("Error dismissing report:", error);
-    res.status(500).json({ error: "Failed to dismiss report" });
-  }
-});
 
-// Get report statistics
-app.get("/api/admin/reports/stats", async (req, res) => {
-  try {
-    const totalReports = await reportCollection.countDocuments();
-    const pendingReports = await reportCollection.countDocuments({ status: { $ne: "dismissed" } });
-    const dismissedReports = await reportCollection.countDocuments({ status: "dismissed" });
+    // analytics apis
 
-    // Get unique prompts with reports
-    const uniquePromptIds = await reportCollection.distinct("promptId");
-    const uniquePrompts = uniquePromptIds.length;
+    // Get all analytics data
 
-    // Get reports by reason
-    const reasons = await reportCollection.aggregate([
-      { $group: { _id: "$reason", count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-    ]).toArray();
+    app.get("/api/admin/analytics", async (req, res) => {
+      try {
+        console.log("Fetching analytics data...");
 
-    res.json({
-      totalReports,
-      pendingReports,
-      dismissedReports,
-      uniquePrompts,
-      reasons: reasons.map(r => ({ reason: r._id, count: r.count })),
-    });
-  } catch (error) {
-    console.error("Error fetching report stats:", error);
-    res.status(500).json({ error: "Failed to fetch stats" });
-  }
-});
+        //Total Users
+        const totalUsers = (await userCollection.countDocuments()) || 0;
+        console.log(`Total Users: ${totalUsers}`);
 
+        //Total Prompts
+        const totalPrompts = (await promptCollection.countDocuments()) || 0;
+        console.log(`Total Prompts: ${totalPrompts}`);
 
+        //Prompt Status
+        const approvedPrompts =
+          (await promptCollection.countDocuments({ status: "approved" })) || 0;
+        const pendingPrompts =
+          (await promptCollection.countDocuments({ status: "pending" })) || 0;
+        const rejectedPrompts =
+          (await promptCollection.countDocuments({ status: "rejected" })) || 0;
+        console.log(
+          `Approved: ${approvedPrompts}, Pending: ${pendingPrompts}, Rejected: ${rejectedPrompts}`,
+        );
 
+        //Reviews, Copies, Bookmark, Rating
+        let totalReviews = 0;
+        let totalCopyCount = 0;
+        let totalBookmarkCount = 0;
+        let totalRatingSum = 0;
+        let promptsWithRating = 0;
 
+        const allPrompts = await promptCollection
+          .find(
+            {},
+            {
+              projection: {
+                reviews: 1,
+                copyCount: 1,
+                bookmarkCount: 1,
+                rating: 1,
+              },
+            },
+          )
+          .toArray();
 
-// analytics apis
+        for (const prompt of allPrompts) {
+          if (prompt.reviews && Array.isArray(prompt.reviews)) {
+            totalReviews += prompt.reviews.length;
+          }
+          if (prompt.copyCount) {
+            totalCopyCount += prompt.copyCount;
+          }
+          if (prompt.bookmarkCount) {
+            totalBookmarkCount += prompt.bookmarkCount;
+          }
+          if (prompt.rating && prompt.rating > 0) {
+            totalRatingSum += prompt.rating;
+            promptsWithRating++;
+          }
+        }
 
-// Get all analytics data
+        const averageRating =
+          promptsWithRating > 0
+            ? Math.round((totalRatingSum / promptsWithRating) * 10) / 10
+            : 0;
+        console.log(
+          `Reviews: ${totalReviews}, Copies: ${totalCopyCount}, Avg Rating: ${averageRating}`,
+        );
 
-app.get("/api/admin/analytics", async (req, res) => {
-  try {
-    console.log("Fetching analytics data...");
-    
-    //Total Users
-    const totalUsers = await userCollection.countDocuments() || 0;
-    console.log(`Total Users: ${totalUsers}`);
-    
-    //Total Prompts
-    const totalPrompts = await promptCollection.countDocuments() || 0;
-    console.log(`Total Prompts: ${totalPrompts}`);
-    
-    //Prompt Status
-    const approvedPrompts = await promptCollection.countDocuments({ status: "approved" }) || 0;
-    const pendingPrompts = await promptCollection.countDocuments({ status: "pending" }) || 0;
-    const rejectedPrompts = await promptCollection.countDocuments({ status: "rejected" }) || 0;
-    console.log(`Approved: ${approvedPrompts}, Pending: ${pendingPrompts}, Rejected: ${rejectedPrompts}`);
-    
-    //Reviews, Copies, Bookmark, Rating
-    let totalReviews = 0;
-    let totalCopyCount = 0;
-    let totalBookmarkCount = 0;
-    let totalRatingSum = 0;
-    let promptsWithRating = 0;
-    
-    const allPrompts = await promptCollection.find({}, { 
-      projection: { reviews: 1, copyCount: 1, bookmarkCount: 1, rating: 1 } 
-    }).toArray();
-    
-    for (const prompt of allPrompts) {
-      if (prompt.reviews && Array.isArray(prompt.reviews)) {
-        totalReviews += prompt.reviews.length;
-      }
-      if (prompt.copyCount) {
-        totalCopyCount += prompt.copyCount;
-      }
-      if (prompt.bookmarkCount) {
-        totalBookmarkCount += prompt.bookmarkCount;
-      }
-      if (prompt.rating && prompt.rating > 0) {
-        totalRatingSum += prompt.rating;
-        promptsWithRating++;
-      }
-    }
-    
-    const averageRating = promptsWithRating > 0 ? Math.round((totalRatingSum / promptsWithRating) * 10) / 10 : 0;
-    console.log(`Reviews: ${totalReviews}, Copies: ${totalCopyCount}, Avg Rating: ${averageRating}`);
-    
-    //User Roles
-    const adminUsers = await userCollection.countDocuments({ role: "admin" }) || 0;
-    const creatorUsers = await userCollection.countDocuments({ role: "creator" }) || 0;
-    const regularUsers = await userCollection.countDocuments({ role: "user" }) || 0;
-    const premiumUsers = await userCollection.countDocuments({ plan: "premium" }) || 0;
-    const freeUsers = await userCollection.countDocuments({ plan: { $ne: "premium" } }) || 0;
-    
-    //Categories & AI Tools
-    const categoriesResult = await promptCollection.aggregate([
-      { $group: { _id: "$category" } },
-      { $count: "total" }
-    ]).toArray();
-    const totalCategories = categoriesResult[0]?.total || 0;
-    
-    const aiToolsResult = await promptCollection.aggregate([
-      { $group: { _id: "$aiTool" } },
-      { $count: "total" }
-    ]).toArray();
-    const totalAITools = aiToolsResult[0]?.total || 0;
-    
-    //Active Users 
-    const activeUsersResult = await promptCollection.aggregate([
-      { $group: { _id: "$creatorsId" } },
-      { $count: "total" }
-    ]).toArray();
-    const totalActiveUsers = activeUsersResult[0]?.total || 0;
-    
-    //Recent Activity (Last 7 Days)
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    
-    const newUsersLast7Days = await userCollection.countDocuments({
-      createdAt: { $gte: sevenDaysAgo }
-    }) || 0;
-    
-    const newPromptsLast7Days = await promptCollection.countDocuments({
-      createdAt: { $gte: sevenDaysAgo }
-    }) || 0;
-    
-    //New Reviews Last 7 Days
-    const newReviewsResult = await promptCollection.aggregate([
-      { $unwind: "$reviews" },
-      { $match: { "reviews.createdAt": { $gte: sevenDaysAgo } } },
-      { $count: "total" }
-    ]).toArray();
-    const newReviewsLast7Days = newReviewsResult[0]?.total || 0;
-    
-    //Response Data
-    const responseData = {
-      totalUsers: totalUsers || 0,
-      totalPrompts: totalPrompts || 0,
-      totalReviews: totalReviews || 0,
-      totalCopyCount: totalCopyCount || 0,
-      totalBookmarkCount: totalBookmarkCount || 0,
-      averageRating: averageRating || 0,
-      approvedPrompts: approvedPrompts || 0,
-      pendingPrompts: pendingPrompts || 0,
-      rejectedPrompts: rejectedPrompts || 0,
-      premiumUsers: premiumUsers || 0,
-      freeUsers: freeUsers || 0,
-      adminUsers: adminUsers || 0,
-      creatorUsers: creatorUsers || 0,
-      regularUsers: regularUsers || 0,
-      totalActiveUsers: totalActiveUsers || 0,
-      totalCategories: totalCategories || 0,
-      totalAITools: totalAITools || 0,
-      newUsersLast7Days: newUsersLast7Days || 0,
-      newPromptsLast7Days: newPromptsLast7Days || 0,
-      newReviewsLast7Days: newReviewsLast7Days || 0,
-      updatedAt: new Date()
-    };
-    
-    console.log("Analytics data fetched successfully!");
-    res.json(responseData);
-    
-  } catch (error) {
-    console.error("Analytics Error:", error);
-    res.status(200).json({
-      totalUsers: 0,
-      totalPrompts: 0,
-      totalReviews: 0,
-      totalCopyCount: 0,
-      totalBookmarkCount: 0,
-      averageRating: 0,
-      approvedPrompts: 0,
-      pendingPrompts: 0,
-      rejectedPrompts: 0,
-      premiumUsers: 0,
-      freeUsers: 0,
-      adminUsers: 0,
-      creatorUsers: 0,
-      regularUsers: 0,
-      totalActiveUsers: 0,
-      totalCategories: 0,
-      totalAITools: 0,
-      newUsersLast7Days: 0,
-      newPromptsLast7Days: 0,
-      newReviewsLast7Days: 0,
-      updatedAt: new Date(),
-      error: error.message
-    });
-  }
-});
+        //User Roles
+        const adminUsers =
+          (await userCollection.countDocuments({ role: "admin" })) || 0;
+        const creatorUsers =
+          (await userCollection.countDocuments({ role: "creator" })) || 0;
+        const regularUsers =
+          (await userCollection.countDocuments({ role: "user" })) || 0;
+        const premiumUsers =
+          (await userCollection.countDocuments({ plan: "premium" })) || 0;
+        const freeUsers =
+          (await userCollection.countDocuments({ plan: { $ne: "premium" } })) ||
+          0;
 
-// Get analytics over time 
-app.get("/api/admin/analytics/over-time", async (req, res) => {
-  const { period = "weekly" } = req.query;
-  
-  try {
-    let startDate = new Date();
-    let groupFormat = {};
-    
-    switch (period) {
-      case "daily":
-        startDate.setDate(startDate.getDate() - 30);
-        groupFormat = { 
-          year: { $year: "$createdAt" }, 
-          month: { $month: "$createdAt" }, 
-          day: { $dayOfMonth: "$createdAt" } 
+        //Categories & AI Tools
+        const categoriesResult = await promptCollection
+          .aggregate([{ $group: { _id: "$category" } }, { $count: "total" }])
+          .toArray();
+        const totalCategories = categoriesResult[0]?.total || 0;
+
+        const aiToolsResult = await promptCollection
+          .aggregate([{ $group: { _id: "$aiTool" } }, { $count: "total" }])
+          .toArray();
+        const totalAITools = aiToolsResult[0]?.total || 0;
+
+        //Active Users
+        const activeUsersResult = await promptCollection
+          .aggregate([{ $group: { _id: "$creatorsId" } }, { $count: "total" }])
+          .toArray();
+        const totalActiveUsers = activeUsersResult[0]?.total || 0;
+
+        //Recent Activity (Last 7 Days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const newUsersLast7Days =
+          (await userCollection.countDocuments({
+            createdAt: { $gte: sevenDaysAgo },
+          })) || 0;
+
+        const newPromptsLast7Days =
+          (await promptCollection.countDocuments({
+            createdAt: { $gte: sevenDaysAgo },
+          })) || 0;
+
+        //New Reviews Last 7 Days
+        const newReviewsResult = await promptCollection
+          .aggregate([
+            { $unwind: "$reviews" },
+            { $match: { "reviews.createdAt": { $gte: sevenDaysAgo } } },
+            { $count: "total" },
+          ])
+          .toArray();
+        const newReviewsLast7Days = newReviewsResult[0]?.total || 0;
+
+        //Response Data
+        const responseData = {
+          totalUsers: totalUsers || 0,
+          totalPrompts: totalPrompts || 0,
+          totalReviews: totalReviews || 0,
+          totalCopyCount: totalCopyCount || 0,
+          totalBookmarkCount: totalBookmarkCount || 0,
+          averageRating: averageRating || 0,
+          approvedPrompts: approvedPrompts || 0,
+          pendingPrompts: pendingPrompts || 0,
+          rejectedPrompts: rejectedPrompts || 0,
+          premiumUsers: premiumUsers || 0,
+          freeUsers: freeUsers || 0,
+          adminUsers: adminUsers || 0,
+          creatorUsers: creatorUsers || 0,
+          regularUsers: regularUsers || 0,
+          totalActiveUsers: totalActiveUsers || 0,
+          totalCategories: totalCategories || 0,
+          totalAITools: totalAITools || 0,
+          newUsersLast7Days: newUsersLast7Days || 0,
+          newPromptsLast7Days: newPromptsLast7Days || 0,
+          newReviewsLast7Days: newReviewsLast7Days || 0,
+          updatedAt: new Date(),
         };
-        break;
-      case "monthly":
-        startDate.setMonth(startDate.getMonth() - 12);
-        groupFormat = { 
-          year: { $year: "$createdAt" }, 
-          month: { $month: "$createdAt" } 
-        };
-        break;
-      default: // weekly
-        startDate.setDate(startDate.getDate() - 90);
-        groupFormat = { 
-          year: { $year: "$createdAt" }, 
-          week: { $week: "$createdAt" } 
-        };
-        break;
-    }
-    
-    // Users over time
-    const usersOverTime = await userCollection.aggregate([
-      { $match: { createdAt: { $gte: startDate } } },
-      { $group: { _id: groupFormat, count: { $sum: 1 } } },
-      { $sort: { "_id": 1 } }
-    ]).toArray();
-    
-    // Prompts over time
-    const promptsOverTime = await promptCollection.aggregate([
-      { $match: { createdAt: { $gte: startDate } } },
-      { $group: { _id: groupFormat, count: { $sum: 1 } } },
-      { $sort: { "_id": 1 } }
-    ]).toArray();
-    
-    // Reviews over time
-    const reviewsOverTime = await promptCollection.aggregate([
-      { $unwind: "$reviews" },
-      { $match: { "reviews.date": { $gte: startDate } } },
-      { $group: { _id: groupFormat, count: { $sum: 1 } } },
-      { $sort: { "_id": 1 } }
-    ]).toArray();
-    
-    // Copies over time
-    const copiesOverTime = await promptCollection.aggregate([
-      { $match: { updatedAt: { $gte: startDate } } },
-      { $group: { _id: groupFormat, totalCopies: { $sum: "$copyCount" } } },
-      { $sort: { "_id": 1 } }
-    ]).toArray();
-    
-    res.json({
-      period,
-      startDate,
-      usersOverTime,
-      promptsOverTime,
-      reviewsOverTime,
-      copiesOverTime
-    });
-  } catch (error) {
-    console.error("Error fetching analytics over time:", error);
-    res.status(500).json({ error: "Failed to fetch analytics over time" });
-  }
-});
 
-
-
-// creator dashboard apis
-
-// Get creator stats
-app.get("/api/creator/stats/:creatorId", async (req, res) => {
-  try {
-    const creatorId = req.params.creatorId;
-    
-    // Get all prompts by this creator
-    const prompts = await promptCollection.find({ creatorsId: creatorId }).toArray();
-    
-    // Total Prompts
-    const totalPrompts = prompts.length;
-    
-    // Total Copies
-    let totalCopies = 0;
-    let totalBookmarks = 0;
-    
-    for (const prompt of prompts) {
-      if (prompt.copyCount) totalCopies += prompt.copyCount;
-      if (prompt.bookmarkCount) totalBookmarks += prompt.bookmarkCount;
-    }
-    
-    // Get approved prompts count
-    const approvedPrompts = prompts.filter(p => p.status === "approved").length;
-    const pendingPrompts = prompts.filter(p => p.status === "pending").length;
-    const rejectedPrompts = prompts.filter(p => p.status === "rejected").length;
-    
-    res.json({
-      totalPrompts,
-      totalCopies,
-      totalBookmarks,
-      approvedPrompts,
-      pendingPrompts,
-      rejectedPrompts,
-      success: true
-    });
-    
-  } catch (error) {
-    console.error("Error fetching creator stats:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: "Failed to fetch creator stats",
-      totalPrompts: 0,
-      totalCopies: 0,
-      totalBookmarks: 0,
-      approvedPrompts: 0,
-      pendingPrompts: 0,
-      rejectedPrompts: 0
-    });
-  }
-});
-
-// Get creator chart data
-app.get("/api/creator/charts/:creatorId", async (req, res) => {
-  try {
-    const creatorId = req.params.creatorId;
-    const { period = "weekly" } = req.query;
-    
-    // Get all prompts by this creator
-    const prompts = await promptCollection.find({ creatorsId: creatorId }).toArray();
-    
-    // Get date range
-    let days = 7;
-    if (period === "weekly") days = 7;
-    else if (period === "monthly") days = 30;
-    else if (period === "yearly") days = 365;
-    
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    
-    // Filter prompts by date
-    const filteredPrompts = prompts.filter(p => {
-      const createdAt = new Date(p.createdAt);
-      return createdAt >= startDate && createdAt <= endDate;
-    });
-    
-    // Group by date for chart
-    const dateMap = new Map();
-    
-    // Initialize all dates
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const key = d.toISOString().split('T')[0];
-      dateMap.set(key, { date: key, prompts: 0, copies: 0 });
-    }
-    
-    // Fill data
-    for (const prompt of filteredPrompts) {
-      const key = new Date(prompt.createdAt).toISOString().split('T')[0];
-      if (dateMap.has(key)) {
-        const data = dateMap.get(key);
-        data.prompts += 1;
-        data.copies += prompt.copyCount || 0;
+        console.log("Analytics data fetched successfully!");
+        res.json(responseData);
+      } catch (error) {
+        console.error("Analytics Error:", error);
+        res.status(200).json({
+          totalUsers: 0,
+          totalPrompts: 0,
+          totalReviews: 0,
+          totalCopyCount: 0,
+          totalBookmarkCount: 0,
+          averageRating: 0,
+          approvedPrompts: 0,
+          pendingPrompts: 0,
+          rejectedPrompts: 0,
+          premiumUsers: 0,
+          freeUsers: 0,
+          adminUsers: 0,
+          creatorUsers: 0,
+          regularUsers: 0,
+          totalActiveUsers: 0,
+          totalCategories: 0,
+          totalAITools: 0,
+          newUsersLast7Days: 0,
+          newPromptsLast7Days: 0,
+          newReviewsLast7Days: 0,
+          updatedAt: new Date(),
+          error: error.message,
+        });
       }
-    }
-    
-    // Convert to array and sort
-    const chartData = Array.from(dateMap.values())
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map(item => ({
-        name: new Date(item.date).toLocaleDateString('en-US', { 
-          month: 'short', 
-          day: 'numeric' 
-        }),
-        prompts: item.prompts,
-        copies: item.copies
-      }));
-    
-    // Get last 6 weeks for growth chart
-    const growthData = [];
-    const weeks = 6;
-    const now = new Date();
-    
-    for (let i = weeks - 1; i >= 0; i--) {
-      const weekStart = new Date(now);
-      weekStart.setDate(weekStart.getDate() - (i * 7 + 7));
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 6);
-      
-      const weekPrompts = prompts.filter(p => {
-        const createdAt = new Date(p.createdAt);
-        return createdAt >= weekStart && createdAt <= weekEnd;
-      });
-      
-      growthData.push({
-        name: `Week ${weeks - i}`,
-        prompts: weekPrompts.length
-      });
-    }
-    
-    res.json({
-      success: true,
-      copiesData: chartData.slice(-7), // Last 7 days
-      growthData: growthData,
-      period: period
     });
-    
-  } catch (error) {
-    console.error("Error fetching creator charts:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to fetch creator charts",
-      copiesData: [],
-      growthData: []
+
+    // Get analytics over time
+    app.get("/api/admin/analytics/over-time", async (req, res) => {
+      const { period = "weekly" } = req.query;
+
+      try {
+        let startDate = new Date();
+        let groupFormat = {};
+
+        switch (period) {
+          case "daily":
+            startDate.setDate(startDate.getDate() - 30);
+            groupFormat = {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+              day: { $dayOfMonth: "$createdAt" },
+            };
+            break;
+          case "monthly":
+            startDate.setMonth(startDate.getMonth() - 12);
+            groupFormat = {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+            };
+            break;
+          default: // weekly
+            startDate.setDate(startDate.getDate() - 90);
+            groupFormat = {
+              year: { $year: "$createdAt" },
+              week: { $week: "$createdAt" },
+            };
+            break;
+        }
+
+        // Users over time
+        const usersOverTime = await userCollection
+          .aggregate([
+            { $match: { createdAt: { $gte: startDate } } },
+            { $group: { _id: groupFormat, count: { $sum: 1 } } },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        // Prompts over time
+        const promptsOverTime = await promptCollection
+          .aggregate([
+            { $match: { createdAt: { $gte: startDate } } },
+            { $group: { _id: groupFormat, count: { $sum: 1 } } },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        // Reviews over time
+        const reviewsOverTime = await promptCollection
+          .aggregate([
+            { $unwind: "$reviews" },
+            { $match: { "reviews.date": { $gte: startDate } } },
+            { $group: { _id: groupFormat, count: { $sum: 1 } } },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        // Copies over time
+        const copiesOverTime = await promptCollection
+          .aggregate([
+            { $match: { updatedAt: { $gte: startDate } } },
+            {
+              $group: { _id: groupFormat, totalCopies: { $sum: "$copyCount" } },
+            },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        res.json({
+          period,
+          startDate,
+          usersOverTime,
+          promptsOverTime,
+          reviewsOverTime,
+          copiesOverTime,
+        });
+      } catch (error) {
+        console.error("Error fetching analytics over time:", error);
+        res.status(500).json({ error: "Failed to fetch analytics over time" });
+      }
     });
-  }
-});
+
+    // creator dashboard apis
+
+    // Get creator stats
+    app.get("/api/creator/stats/:creatorId", async (req, res) => {
+      try {
+        const creatorId = req.params.creatorId;
+
+        // Get all prompts by this creator
+        const prompts = await promptCollection
+          .find({ creatorsId: creatorId })
+          .toArray();
+
+        // Total Prompts
+        const totalPrompts = prompts.length;
+
+        // Total Copies
+        let totalCopies = 0;
+        let totalBookmarks = 0;
+
+        for (const prompt of prompts) {
+          if (prompt.copyCount) totalCopies += prompt.copyCount;
+          if (prompt.bookmarkCount) totalBookmarks += prompt.bookmarkCount;
+        }
+
+        // Get approved prompts count
+        const approvedPrompts = prompts.filter(
+          (p) => p.status === "approved",
+        ).length;
+        const pendingPrompts = prompts.filter(
+          (p) => p.status === "pending",
+        ).length;
+        const rejectedPrompts = prompts.filter(
+          (p) => p.status === "rejected",
+        ).length;
+
+        res.json({
+          totalPrompts,
+          totalCopies,
+          totalBookmarks,
+          approvedPrompts,
+          pendingPrompts,
+          rejectedPrompts,
+          success: true,
+        });
+      } catch (error) {
+        console.error("Error fetching creator stats:", error);
+        res.status(500).json({
+          success: false,
+          error: "Failed to fetch creator stats",
+          totalPrompts: 0,
+          totalCopies: 0,
+          totalBookmarks: 0,
+          approvedPrompts: 0,
+          pendingPrompts: 0,
+          rejectedPrompts: 0,
+        });
+      }
+    });
+
+    // Get creator chart data
+    app.get("/api/creator/charts/:creatorId", async (req, res) => {
+      try {
+        const creatorId = req.params.creatorId;
+        const { period = "weekly" } = req.query;
+
+        // Get all prompts by this creator
+        const prompts = await promptCollection
+          .find({ creatorsId: creatorId })
+          .toArray();
+
+        // Get date range
+        let days = 7;
+        if (period === "weekly") days = 7;
+        else if (period === "monthly") days = 30;
+        else if (period === "yearly") days = 365;
+
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - days);
+
+        // Filter prompts by date
+        const filteredPrompts = prompts.filter((p) => {
+          const createdAt = new Date(p.createdAt);
+          return createdAt >= startDate && createdAt <= endDate;
+        });
+
+        // Group by date for chart
+        const dateMap = new Map();
+
+        // Initialize all dates
+        for (
+          let d = new Date(startDate);
+          d <= endDate;
+          d.setDate(d.getDate() + 1)
+        ) {
+          const key = d.toISOString().split("T")[0];
+          dateMap.set(key, { date: key, prompts: 0, copies: 0 });
+        }
+
+        // Fill data
+        for (const prompt of filteredPrompts) {
+          const key = new Date(prompt.createdAt).toISOString().split("T")[0];
+          if (dateMap.has(key)) {
+            const data = dateMap.get(key);
+            data.prompts += 1;
+            data.copies += prompt.copyCount || 0;
+          }
+        }
+
+        // Convert to array and sort
+        const chartData = Array.from(dateMap.values())
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .map((item) => ({
+            name: new Date(item.date).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            }),
+            prompts: item.prompts,
+            copies: item.copies,
+          }));
+
+        // Get last 6 weeks for growth chart
+        const growthData = [];
+        const weeks = 6;
+        const now = new Date();
+
+        for (let i = weeks - 1; i >= 0; i--) {
+          const weekStart = new Date(now);
+          weekStart.setDate(weekStart.getDate() - (i * 7 + 7));
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 6);
+
+          const weekPrompts = prompts.filter((p) => {
+            const createdAt = new Date(p.createdAt);
+            return createdAt >= weekStart && createdAt <= weekEnd;
+          });
+
+          growthData.push({
+            name: `Week ${weeks - i}`,
+            prompts: weekPrompts.length,
+          });
+        }
+
+        res.json({
+          success: true,
+          copiesData: chartData.slice(-7), // Last 7 days
+          growthData: growthData,
+          period: period,
+        });
+      } catch (error) {
+        console.error("Error fetching creator charts:", error);
+        res.status(500).json({
+          success: false,
+          error: "Failed to fetch creator charts",
+          copiesData: [],
+          growthData: [],
+        });
+      }
+    });
 
 
 
@@ -1480,7 +1596,7 @@ app.get("/api/creator/charts/:creatorId", async (req, res) => {
 
 
 
-
+    
 
     await client.db("admin").command({ ping: 1 });
     console.log(
