@@ -42,33 +42,33 @@ async function run() {
     //   res.send(result);
     // });
 
-    app.get("/api/prompts", async (req, res) => {
-      const { search, category, aiTool, difficulty, sort } = req.query;
+    // app.get("/api/prompts", async (req, res) => {
+    //   const { search, category, aiTool, difficulty, sort } = req.query;
 
-      // const query = {};
+    //   // const query = {};
 
-      const query = { status: "approved" };
+    //   const query = { status: "approved" };
 
-      if (search) {
-        query.$or = [
-          { title: { $regex: search, $options: "i" } },
-          { tags: { $regex: search, $options: "i" } },
-          { aiTool: { $regex: search, $options: "i" } },
-        ];
-      }
-      if (category) query.category = { $regex: `^${category}$`, $options: "i" };
-      if (aiTool) query.aiTool = { $regex: `^${aiTool}$`, $options: "i" };
-      if (difficulty)
-        query.difficulty = { $regex: `^${difficulty}$`, $options: "i" };
+    //   if (search) {
+    //     query.$or = [
+    //       { title: { $regex: search, $options: "i" } },
+    //       { tags: { $regex: search, $options: "i" } },
+    //       { aiTool: { $regex: search, $options: "i" } },
+    //     ];
+    //   }
+    //   if (category) query.category = { $regex: `^${category}$`, $options: "i" };
+    //   if (aiTool) query.aiTool = { $regex: `^${aiTool}$`, $options: "i" };
+    //   if (difficulty)
+    //     query.difficulty = { $regex: `^${difficulty}$`, $options: "i" };
 
-      let sortObj = {};
-      if (sort === "popular") sortObj = { rating: -1 };
-      else if (sort === "copied") sortObj = { copyCount: -1 };
-      else if (sort === "latest") sortObj = { createdAt: -1 };
+    //   let sortObj = {};
+    //   if (sort === "popular") sortObj = { rating: -1 };
+    //   else if (sort === "copied") sortObj = { copyCount: -1 };
+    //   else if (sort === "latest") sortObj = { createdAt: -1 };
 
-      const result = await promptCollection.find(query).sort(sortObj).toArray();
-      res.send(result);
-    });
+    //   const result = await promptCollection.find(query).sort(sortObj).toArray();
+    //   res.send(result);
+    // });
 
     app.post("/api/prompts", async (req, res) => {
       const prompt = req.body;
@@ -1820,6 +1820,62 @@ app.get("/api/reviews/stats", async (req, res) => {
       error: "Failed to fetch review stats" 
     });
   }
+});
+
+
+
+//pagination api
+
+app.get("/api/prompts", async (req, res) => {
+  const { search, category, aiTool, difficulty, sort, page = 1, limit = 12 } = req.query;
+
+  const query = { status: "approved" };
+
+  if (search) {
+    query.$or = [
+      { title: { $regex: search, $options: "i" } },
+      { tags: { $regex: search, $options: "i" } },
+      { aiTool: { $regex: search, $options: "i" } },
+    ];
+  }
+  if (category) query.category = { $regex: `^${category}$`, $options: "i" };
+  if (aiTool) query.aiTool = { $regex: `^${aiTool}$`, $options: "i" };
+  if (difficulty)
+    query.difficulty = { $regex: `^${difficulty}$`, $options: "i" };
+
+  let sortObj = {};
+  if (sort === "popular") sortObj = { rating: -1 };
+  else if (sort === "copied") sortObj = { copyCount: -1 };
+  else if (sort === "latest") sortObj = { createdAt: -1 };
+
+  //Pagination calculation
+  const pageNum = parseInt(page) || 1;
+  const limitNum = parseInt(limit) || 12;
+  const skip = (pageNum - 1) * limitNum;
+
+  //Get total count for pagination
+  const totalPrompts = await promptCollection.countDocuments(query);
+  const totalPages = Math.ceil(totalPrompts / limitNum);
+
+  //Get paginated results
+  const result = await promptCollection
+    .find(query)
+    .sort(sortObj)
+    .skip(skip)
+    .limit(limitNum)
+    .toArray();
+
+  res.send({
+    prompts: result,
+    pagination: {
+      currentPage: pageNum,
+      totalPages: totalPages,
+      totalItems: totalPrompts,
+      itemsPerPage: limitNum,
+      hasNextPage: pageNum < totalPages,
+      hasPrevPage: pageNum > 1,
+    },
+  });
 });
 
 
