@@ -362,31 +362,31 @@ async function run() {
 
     // admin apis
 
-    app.get("/api/admin/prompts", async (req, res) => {
-      const { status } = req.query;
-      const query = {};
+    // app.get("/api/admin/prompts", async (req, res) => {
+    //   const { status } = req.query;
+    //   const query = {};
 
-      if (status && status !== "all") {
-        query.status = status;
-      }
+    //   if (status && status !== "all") {
+    //     query.status = status;
+    //   }
 
-      const result = await promptCollection
-        .find(query)
-        .sort({ createdAt: -1 })
-        .toArray();
+    //   const result = await promptCollection
+    //     .find(query)
+    //     .sort({ createdAt: -1 })
+    //     .toArray();
 
-      const promptsWithCreator = await Promise.all(
-        result.map(async (prompt) => {
-          const creator = await userCollection.findOne(
-            { _id: new ObjectId(prompt.creatorsId) },
-            { projection: { name: 1, email: 1, plan: 1 } },
-          );
-          return { ...prompt, creator };
-        }),
-      );
+    //   const promptsWithCreator = await Promise.all(
+    //     result.map(async (prompt) => {
+    //       const creator = await userCollection.findOne(
+    //         { _id: new ObjectId(prompt.creatorsId) },
+    //         { projection: { name: 1, email: 1, plan: 1 } },
+    //       );
+    //       return { ...prompt, creator };
+    //     }),
+    //   );
 
-      res.send(promptsWithCreator);
-    });
+    //   res.send(promptsWithCreator);
+    // });
 
     app.patch("/api/admin/prompts/:id", async (req, res) => {
       const id = req.params.id;
@@ -1867,6 +1867,57 @@ app.get("/api/prompts", async (req, res) => {
 
   res.send({
     prompts: result,
+    pagination: {
+      currentPage: pageNum,
+      totalPages: totalPages,
+      totalItems: totalPrompts,
+      itemsPerPage: limitNum,
+      hasNextPage: pageNum < totalPages,
+      hasPrevPage: pageNum > 1,
+    },
+  });
+});
+
+
+
+app.get("/api/admin/prompts", async (req, res) => {
+  const { status, page = 1, limit = 10 } = req.query;
+  const query = {};
+
+  if (status && status !== "all") {
+    query.status = status;
+  }
+
+  // Pagination calculation
+  const pageNum = parseInt(page) || 1;
+  const limitNum = parseInt(limit) || 10;
+  const skip = (pageNum - 1) * limitNum;
+
+  // Get total count for pagination
+  const totalPrompts = await promptCollection.countDocuments(query);
+  const totalPages = Math.ceil(totalPrompts / limitNum);
+
+  // Get paginated results
+  const result = await promptCollection
+    .find(query)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limitNum)
+    .toArray();
+
+  // Get creator info for each prompt
+  const promptsWithCreator = await Promise.all(
+    result.map(async (prompt) => {
+      const creator = await userCollection.findOne(
+        { _id: new ObjectId(prompt.creatorsId) },
+        { projection: { name: 1, email: 1, plan: 1 } }
+      );
+      return { ...prompt, creator };
+    })
+  );
+
+  res.send({
+    prompts: promptsWithCreator,
     pagination: {
       currentPage: pageNum,
       totalPages: totalPages,
