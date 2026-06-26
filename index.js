@@ -266,7 +266,7 @@ async function run() {
       res.send(result);
     });
 
-    // user specigiq review get
+    // user specifiq review get
 
     app.get("/api/reviews/user", async (req, res) => {
       const { email } = req.query;
@@ -312,6 +312,13 @@ async function run() {
     app.post("/api/subscription", async (req, res) => {
       const { email, plan, stripeSessionId } = req.body;
 
+      if (!email || !plan) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Email and plan are required" 
+      });
+    }
+
       const subscription = {
         email,
         plan,
@@ -322,12 +329,24 @@ async function run() {
 
       const result = await subscriptionCollection.insertOne(subscription);
 
+       await userCollection.updateOne(
+      { email: email },
+      { $set: { plan: "premium" } }
+    );
+
       // Send notification to user
-      await sendNotification(userId, {
+       const user = await userCollection.findOne({ email: email });
+    if (user) {
+      await sendNotification(user._id.toString(), {
         type: "subscription",
         message: `🎉 You have successfully subscribed to the Premium plan!`,
       });
-      res.send(result);
+    }
+      res.json({ 
+    success: true, 
+    message: "Subscription added successfully",
+    insertedId: result.insertedId 
+  });
     });
 
     // user plan update
