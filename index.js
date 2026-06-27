@@ -28,25 +28,13 @@ const JWKS = createRemoteJWKSet(
   new URL("http://localhost:3000/api/auth/jwks")
 )
 
-const verifyToken = async(req,res,next) =>{
-  const authHeader = req?.headers.authorization
-  if(!authHeader){
-    return res.status(401).json({message: "unauthorized"})
-  }
-  const token = authHeader.split(" ")[1];
-  if(!token){
-    return res.status(401).json({message: "unauthorized"})
-  }
-  // console.log(token);
 
-  try{
-    const {payload} = await jwtVerify(token, JWKS)
-  console.log(payload);
-  next()
-  } catch (error) {
-    return res.status(403).json({message: "forbidden"})
+const verifyRole = (...roles) => (req, res, next) => {
+  if (!roles.includes(req.user?.role)) {
+    return res.status(403).json({ message: "forbidden" });
   }
-}
+  next();
+};
 
 async function run() {
   try {
@@ -59,6 +47,29 @@ async function run() {
     const reportCollection = db.collection("reports");
     const subscriptionCollection = db.collection("subscriptions");
     const notificationCollection = db.collection("notifications");
+
+    const verifyToken = async(req,res,next) =>{
+  const authHeader = req?.headers.authorization
+  if(!authHeader){
+    return res.status(401).json({message: "unauthorized"})
+  }
+  const token = authHeader.split(" ")[1];
+  if(!token){
+    return res.status(401).json({message: "unauthorized"})
+  }
+  // console.log(token);
+
+  try{
+    const {payload} = await jwtVerify(token, JWKS);
+    const user = await userCollection.findOne({ email: payload.email });
+    if (!user) return res.status(401).json({ message: "unauthorized" });
+    req.user = user;
+  // console.log(payload);
+  next()
+  } catch (error) {
+    return res.status(403).json({message: "forbidden"})
+  }
+}
 
     //prompt related api's
 
@@ -729,7 +740,7 @@ async function run() {
     // user managemnet api
 
     // Get all users with their prompt counts
-    app.get("/api/admin/users", async (req, res) => {
+    app.get("/api/admin/users",verifyToken,verifyRole("admin"), async (req, res) => {
       try {
         const users = await userCollection.find().toArray();
 
@@ -768,7 +779,7 @@ async function run() {
     });
 
     // Update user role
-    app.patch("/api/admin/users/:userId/role", async (req, res) => {
+    app.patch("/api/admin/users/:userId/role",verifyToken,verifyRole("admin"), async (req, res) => {
       const userId = req.params.userId;
       const { role } = req.body;
 
@@ -800,7 +811,7 @@ async function run() {
     });
 
     // Delete user
-    app.delete("/api/admin/users/:userId", async (req, res) => {
+    app.delete("/api/admin/users/:userId",verifyToken,verifyRole("admin"), async (req, res) => {
       const userId = req.params.userId;
 
       try {
@@ -832,7 +843,7 @@ async function run() {
     });
 
     // Get user statistics
-    app.get("/api/admin/users/stats", async (req, res) => {
+    app.get("/api/admin/users/stats",verifyToken,verifyRole("admin"), async (req, res) => {
       try {
         const totalUsers = await userCollection.countDocuments();
         const adminUsers = await userCollection.countDocuments({
@@ -869,7 +880,7 @@ async function run() {
     // payment management
 
     // Get all subscriptions with user details
-    app.get("/api/admin/subscriptions", async (req, res) => {
+    app.get("/api/admin/subscriptions",verifyToken,verifyRole("admin"), async (req, res) => {
       try {
         const subscriptions = await subscriptionCollection
           .find()
@@ -899,7 +910,7 @@ async function run() {
     });
 
     // Get subscription statistics
-    app.get("/api/admin/subscriptions/stats", async (req, res) => {
+    app.get("/api/admin/subscriptions/stats",verifyToken,verifyRole("admin"), async (req, res) => {
       try {
         const totalSubscriptions =
           await subscriptionCollection.countDocuments();
@@ -999,7 +1010,7 @@ async function run() {
     //reports api
 
     // Get all reports with prompt and user details
-    app.get("/api/admin/reports", async (req, res) => {
+    app.get("/api/admin/reports",verifyToken,verifyRole("admin"), async (req, res) => {
       try {
         const reports = await reportCollection
           .find()
@@ -1049,7 +1060,7 @@ async function run() {
     });
 
     // Remove prompt and all its reports
-    app.delete("/api/admin/reports/:promptId/remove", async (req, res) => {
+    app.delete("/api/admin/reports/:promptId/remove",verifyToken,verifyRole("admin"), async (req, res) => {
       const promptId = req.params.promptId;
 
       try {
@@ -1085,7 +1096,7 @@ async function run() {
     });
 
     // Warn creator
-    app.patch("/api/admin/reports/:promptId/warn", async (req, res) => {
+    app.patch("/api/admin/reports/:promptId/warn",verifyToken,verifyRole("admin"), async (req, res) => {
       const promptId = req.params.promptId;
       const { warningMessage } = req.body;
 
@@ -1131,7 +1142,7 @@ async function run() {
     });
 
     // Dismiss report (not harmful)
-    app.patch("/api/admin/reports/:reportId/dismiss", async (req, res) => {
+    app.patch("/api/admin/reports/:reportId/dismiss",verifyToken,verifyRole("admin"), async (req, res) => {
       const reportId = req.params.reportId;
 
       try {
@@ -1164,7 +1175,7 @@ async function run() {
     });
 
     // Get report statistics
-    app.get("/api/admin/reports/stats", async (req, res) => {
+    app.get("/api/admin/reports/stats",verifyToken,verifyRole("admin"), async (req, res) => {
       try {
         const totalReports = await reportCollection.countDocuments();
         const pendingReports = await reportCollection.countDocuments({
@@ -1203,7 +1214,7 @@ async function run() {
 
     // Get all analytics data
 
-    app.get("/api/admin/analytics", async (req, res) => {
+    app.get("/api/admin/analytics",verifyToken,verifyRole("admin"), async (req, res) => {
       try {
         console.log("Fetching analytics data...");
 
@@ -1382,7 +1393,7 @@ async function run() {
     });
 
     // Get analytics over time
-    app.get("/api/admin/analytics/over-time", async (req, res) => {
+    app.get("/api/admin/analytics/over-time",verifyToken,verifyRole("admin"), async (req, res) => {
       const { period = "weekly" } = req.query;
 
       try {
@@ -1920,7 +1931,7 @@ async function run() {
       });
     });
 
-    app.get("/api/admin/prompts", async (req, res) => {
+    app.get("/api/admin/prompts",verifyToken, verifyRole("admin"), async (req, res) => {
       const { status, page = 1, limit = 10 } = req.query;
       const query = {};
 
