@@ -203,6 +203,51 @@ client.connect(() => {console.log('connecting to mongodb')}).catch(console.dir)
 
     // to get specifiq prompt details
     
+// app.get("/api/prompts/:id", verifyToken, async (req, res) => {
+//   try {
+//     const id = req.params.id;
+//     const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
+
+//     if (!prompt) {
+//       return res.status(404).json({ error: "Prompt not found" });
+//     }
+
+//     const user = req.user;
+    
+    
+//     if (prompt.visibility === "private") {
+//       //db thk latest user check
+//       const latestUser = await userCollection.findOne({ 
+//         _id: new ObjectId(user._id) 
+//       });
+      
+//       //premium na hole 403
+//       if (!latestUser || latestUser.plan !== "premium") {
+//         return res.status(403).json({ 
+//           error: "Premium subscription required",
+//           isLocked: true,
+//           message: "This is a private premium prompt. Subscribe to unlock."
+//         });
+//       }
+//     }
+
+//     const creator = await userCollection.findOne({
+//       _id: new ObjectId(prompt.creatorsId),
+//     });
+
+//     res.send({ 
+//       ...prompt, 
+//       creator,
+//       userPlan: user.plan
+//     });
+    
+//   } catch (error) {
+//     console.error("Error fetching prompt:", error);
+//     res.status(500).json({ error: "Failed to fetch prompt" });
+//   }
+// });
+
+
 app.get("/api/prompts/:id", verifyToken, async (req, res) => {
   try {
     const id = req.params.id;
@@ -212,35 +257,20 @@ app.get("/api/prompts/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Prompt not found" });
     }
 
-    const user = req.user;
-    
-    
-    if (prompt.visibility === "private") {
-      //db thk latest user check
-      const latestUser = await userCollection.findOne({ 
-        _id: new ObjectId(user._id) 
+    const latestUser = await userCollection.findOne({ _id: new ObjectId(req.user._id) });
+    const creator = await userCollection.findOne({ _id: new ObjectId(prompt.creatorsId) });
+
+    if (prompt.visibility === "private" && latestUser?.plan !== "premium") {
+      return res.json({
+        ...prompt,
+        content: "",        // content লুকাও
+        isLocked: true,
+        creator,
       });
-      
-      //premium na hole 403
-      if (!latestUser || latestUser.plan !== "premium") {
-        return res.status(403).json({ 
-          error: "Premium subscription required",
-          isLocked: true,
-          message: "This is a private premium prompt. Subscribe to unlock."
-        });
-      }
     }
 
-    const creator = await userCollection.findOne({
-      _id: new ObjectId(prompt.creatorsId),
-    });
+    res.json({ ...prompt, isLocked: false, creator });
 
-    res.send({ 
-      ...prompt, 
-      creator,
-      userPlan: user.plan
-    });
-    
   } catch (error) {
     console.error("Error fetching prompt:", error);
     res.status(500).json({ error: "Failed to fetch prompt" });
