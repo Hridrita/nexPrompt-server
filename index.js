@@ -106,7 +106,7 @@ async function run() {
     //   res.send(result);
     // });
 
-    app.post("/api/prompts", async (req, res) => {
+    app.post("/api/prompts",verifyToken,verifyRole("creator","user"), async (req, res) => {
       const prompt = req.body;
       const creatorId = prompt.creatorsId;
 
@@ -153,7 +153,7 @@ async function run() {
       res.json(result);
     });
 
-    app.patch("/api/prompts/:id", async (req, res) => {
+    app.patch("/api/prompts/:id",verifyToken,verifyRole("creator","user"), async (req, res) => {
       const id = req.params.id;
       const updatedData = req.body;
 
@@ -164,7 +164,7 @@ async function run() {
       res.send(result);
     });
 
-    app.delete("/api/prompts/:id", async (req, res) => {
+    app.delete("/api/prompts/:id",verifyToken,verifyRole("creator","user"), async (req, res) => {
       const id = req.params.id;
       const result = await promptCollection.deleteOne({
         _id: new ObjectId(id),
@@ -172,7 +172,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/api/prompts/creator/:userId", async (req, res) => {
+    app.get("/api/prompts/creator/:userId",verifyToken,verifyRole("creator","user"), async (req, res) => {
       const userId = req.params.userId;
       const result = await promptCollection
         .find({ creatorsId: userId })
@@ -191,30 +191,86 @@ async function run() {
     });
 
     // to get specifiq prompt details
-    app.get("/api/prompts/:id",verifyToken, async (req, res) => {
-      const id = req.params.id;
-      const query = {
-        _id: new ObjectId(id),
-      };
-      const prompt = await promptCollection.findOne(query);
+    
+app.get("/api/prompts/:id", verifyToken, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const prompt = await promptCollection.findOne({ _id: new ObjectId(id) });
 
-      const creator = await userCollection.findOne({
-        _id: new ObjectId(prompt.creatorsId),
+    if (!prompt) {
+      return res.status(404).json({ error: "Prompt not found" });
+    }
+
+    const user = req.user;
+    
+    
+    if (prompt.visibility === "private") {
+      //db thk latest user check
+      const latestUser = await userCollection.findOne({ 
+        _id: new ObjectId(user._id) 
       });
-      console.log("creator", creator);
+      
+      //premium na hole 403
+      if (!latestUser || latestUser.plan !== "premium") {
+        return res.status(403).json({ 
+          error: "Premium subscription required",
+          isLocked: true,
+          message: "This is a private premium prompt. Subscribe to unlock."
+        });
+      }
+    }
 
-      res.send({ ...prompt, creator });
+    const creator = await userCollection.findOne({
+      _id: new ObjectId(prompt.creatorsId),
     });
+
+    res.send({ 
+      ...prompt, 
+      creator,
+      userPlan: user.plan
+    });
+    
+  } catch (error) {
+    console.error("Error fetching prompt:", error);
+    res.status(500).json({ error: "Failed to fetch prompt" });
+  }
+});
+
+
+
+//user plan check
+app.get("/api/users/:userId/plan", verifyToken, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const user = await userCollection.findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { plan: 1, name: 1, email: 1 } }
+    );
+    
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    res.json({ 
+      plan: user.plan || 'free',
+      name: user.name,
+      email: user.email
+    });
+  } catch (error) {
+    console.error("Error fetching user plan:", error);
+    res.status(500).json({ error: "Failed to fetch user plan" });
+  }
+});
 
     //bookmark related api's
 
-    app.post("/api/bookmark", async (req, res) => {
+    app.post("/api/bookmark",verifyToken,verifyRole("user"), async (req, res) => {
       const bookmarkData = req.body;
       const result = await bookmarkCollection.insertOne(bookmarkData);
       res.send(result);
     });
 
-    app.patch("/api/prompts/:id/bookmark", async (req, res) => {
+    app.patch("/api/prompts/:id/bookmark",verifyToken,verifyRole("user"), async (req, res) => {
       const id = req.params.id;
       const result = await promptCollection.updateOne(
         { _id: new ObjectId(id) },
@@ -223,13 +279,13 @@ async function run() {
       res.send(result);
     });
 
-    app.delete("/api/bookmark/remove", async (req, res) => {
+    app.delete("/api/bookmark/remove",verifyToken,verifyRole("user"), async (req, res) => {
       const { promptId, userId } = req.body;
       const result = await bookmarkCollection.deleteOne({ promptId, userId });
       res.send(result);
     });
 
-    app.patch("/api/prompts/:id/bookmark/decrement", async (req, res) => {
+    app.patch("/api/prompts/:id/bookmark/decrement",verifyToken,verifyRole("user"), async (req, res) => {
       const id = req.params.id;
       const result = await promptCollection.updateOne(
         { _id: new ObjectId(id) },
@@ -244,7 +300,7 @@ async function run() {
       res.json({ bookmarked: !!existing });
     });
 
-    app.get("/api/bookmark/user/:userId", async (req, res) => {
+    app.get("/api/bookmark/user/:userId",verifyToken,verifyRole("user"), async (req, res) => {
       const userId = req.params.userId;
       const result = await bookmarkCollection
         .find({ userId: userId })
@@ -254,7 +310,7 @@ async function run() {
 
     //copy related api
 
-    app.patch("/api/prompts/:id/copy", async (req, res) => {
+    app.patch("/api/prompts/:id/copy",verifyToken,verifyRole("user"), async (req, res) => {
       const id = req.params.id;
       const result = await promptCollection.updateOne(
         { _id: new ObjectId(id) },
@@ -265,7 +321,7 @@ async function run() {
 
     //review related api
 
-    app.post("/api/prompts/:id/review", async (req, res) => {
+    app.post("/api/prompts/:id/review",verifyToken,verifyRole("user"), async (req, res) => {
       const id = req.params.id;
       const { name, email, rating, comment } = req.body;
 
@@ -305,7 +361,7 @@ async function run() {
 
     // user specifiq review get
 
-    app.get("/api/reviews/user", async (req, res) => {
+    app.get("/api/reviews/user",verifyToken,verifyRole("user"), async (req, res) => {
       const { email } = req.query;
       if (!email) return res.send([]);
 
@@ -327,7 +383,7 @@ async function run() {
 
     //report realted api
 
-    app.post("/api/reports", async (req, res) => {
+    app.post("/api/reports",verifyToken,verifyRole("user"), async (req, res) => {
       const { promptId, promptTitle, creatorId, reason, description } =
         req.body;
 
@@ -346,49 +402,72 @@ async function run() {
 
     //subscription related api
 
-    app.post("/api/subscription", async (req, res) => {
-      const { email, plan, stripeSessionId } = req.body;
+    // subscription related api - ফিক্স
+app.post("/api/subscription", verifyToken, verifyRole("user"), async (req, res) => {
+  const { email, plan, stripeSessionId } = req.body;
 
-      if (!email || !plan) {
-        return res.status(400).json({
-          success: false,
-          error: "Email and plan are required",
-        });
-      }
-
-      const subscription = {
-        email,
-        plan,
-        stripeSessionId,
-        subscribedAt: new Date(),
-        status: "active",
-      };
-
-      const result = await subscriptionCollection.insertOne(subscription);
-
-      await userCollection.updateOne(
-        { email: email },
-        { $set: { plan: "premium" } },
-      );
-
-      // Send notification to user
-      const user = await userCollection.findOne({ email: email });
-      if (user) {
-        await sendNotification(user._id.toString(), {
-          type: "subscription",
-          message: `🎉 You have successfully subscribed to the Premium plan!`,
-        });
-      }
-      res.json({
-        success: true,
-        message: "Subscription added successfully",
-        insertedId: result.insertedId,
-      });
+  if (!email || !plan) {
+    return res.status(400).json({
+      success: false,
+      error: "Email and plan are required",
     });
+  }
+
+  try {
+    //upadate the user
+    const userUpdateResult = await userCollection.updateOne(
+      { email: email },
+      { 
+        $set: { 
+          plan: "premium",
+          updatedAt: new Date() 
+        } 
+      }
+    );
+
+    if (userUpdateResult.modifiedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found"
+      });
+    }
+
+    //Subscription details 
+    const subscription = {
+      email,
+      plan,
+      stripeSessionId,
+      subscribedAt: new Date(),
+      status: "active",
+    };
+
+    const result = await subscriptionCollection.insertOne(subscription);
+
+    //return updated user data
+    const updatedUser = await userCollection.findOne({ email: email });
+
+    res.json({
+      success: true,
+      message: "Subscription added successfully",
+      insertedId: result.insertedId,
+      user: {
+        plan: updatedUser.plan,
+        name: updatedUser.name,
+        email: updatedUser.email
+      }
+    });
+  } catch (error) {
+    console.error("Subscription error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to process subscription"
+    });
+  }
+});
 
     // user plan update
 
-    app.patch("/api/users/plan", async (req, res) => {
+    app.patch("/api/users/plan",verifyToken,verifyRole("user"), async (req, res) => {
       const { email, plan } = req.body;
       const result = await userCollection.updateOne(
         { email },
