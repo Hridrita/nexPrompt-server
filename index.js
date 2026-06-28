@@ -36,9 +36,11 @@ const verifyRole = (...roles) => (req, res, next) => {
   next();
 };
 
-async function run() {
-  try {
-    await client.connect();
+// async function run() {
+//   try {
+//     await client.connect();
+
+client.connect(() => {console.log('connecting to mongodb')}).catch(console.dir)
 
     const db = client.db("nexPrompt_db");
     const promptCollection = db.collection("prompts");
@@ -2077,16 +2079,18 @@ app.post("/api/subscription", verifyToken, verifyRole("user"), async (req, res) 
 
 
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
     );
-  } finally {
-    // await client.close();
-  }
-}
-run().catch(console.dir);
+//   } finally {
+//     // await client.close();
+//   }
+// }
+// run().catch(console.dir);
 
 app.listen(PORT, () => {
   console.log(`server is running on port ${PORT}`);
 });
+
+module.exports = app;
