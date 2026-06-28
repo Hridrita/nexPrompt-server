@@ -36,6 +36,15 @@ const verifyRole = (...roles) => (req, res, next) => {
   next();
 };
 
+const verifyInternal = (req, res, next) => {
+  const secret = req.headers['x-internal-secret'];
+  if (secret !== process.env.INTERNAL_SECRET) {
+    return res.status(403).json({ message: "forbidden" });
+  }
+  next();
+};
+
+
 // async function run() {
 //   try {
 //     await client.connect();
@@ -404,9 +413,10 @@ app.get("/api/users/:userId/plan", verifyToken, async (req, res) => {
 
     //subscription related api
 
-    // subscription related api - ফিক্স
-app.post("/api/subscription", verifyToken, verifyRole("user"), async (req, res) => {
+app.post("/api/subscription", verifyInternal, async (req, res) => {
   const { email, plan, stripeSessionId } = req.body;
+
+  console.log("📝 Subscription request:", { email, plan, stripeSessionId });
 
   if (!email || !plan) {
     return res.status(400).json({
@@ -416,7 +426,6 @@ app.post("/api/subscription", verifyToken, verifyRole("user"), async (req, res) 
   }
 
   try {
-    //upadate the user
     const userUpdateResult = await userCollection.updateOne(
       { email: email },
       { 
@@ -427,14 +436,22 @@ app.post("/api/subscription", verifyToken, verifyRole("user"), async (req, res) 
       }
     );
 
+    console.log("User update result:", userUpdateResult);
+
     if (userUpdateResult.modifiedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        error: "User not found"
-      });
+      
+      const userExists = await userCollection.findOne({ email: email });
+      if (!userExists) {
+        return res.status(404).json({
+          success: false,
+          error: "User not found"
+        });
+      }
+      
+      console.log("User exists but not updated:", userExists);
     }
 
-    //Subscription details 
+    
     const subscription = {
       email,
       plan,
@@ -445,17 +462,19 @@ app.post("/api/subscription", verifyToken, verifyRole("user"), async (req, res) 
 
     const result = await subscriptionCollection.insertOne(subscription);
 
-    //return updated user data
+    
     const updatedUser = await userCollection.findOne({ email: email });
+
+    console.log("Subscription successful for:", email);
 
     res.json({
       success: true,
       message: "Subscription added successfully",
       insertedId: result.insertedId,
       user: {
-        plan: updatedUser.plan,
-        name: updatedUser.name,
-        email: updatedUser.email
+        plan: updatedUser?.plan || "premium",
+        name: updatedUser?.name,
+        email: updatedUser?.email
       }
     });
   } catch (error) {
@@ -469,7 +488,7 @@ app.post("/api/subscription", verifyToken, verifyRole("user"), async (req, res) 
 
     // user plan update
 
-    app.patch("/api/users/plan",verifyToken,verifyRole("user"), async (req, res) => {
+    app.patch("/api/users/plan",verifyInternal, async (req, res) => {
       const { email, plan } = req.body;
       const result = await userCollection.updateOne(
         { email },
